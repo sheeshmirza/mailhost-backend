@@ -1,0 +1,90 @@
+services:
+  my-postgres:
+    image: postgres:latest
+    container_name: my-postgres
+    hostname: postgres-server
+    networks:
+      - testNet
+      - mailhost-net
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+    environment:
+      POSTGRES_HOST_AUTH_METHOD: trust
+    volumes:
+      - testVol:/var/lib/postgresql
+  my-redis:
+    image: redis:latest
+    container_name: my-redis
+    hostname: redis-server
+    networks:
+      - testNet
+      - mailhost-net
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    volumes:
+      - testVol:/data
+  my-rabbitmq:
+    image: rabbitmq:4-management
+    container_name: my-rabbitmq
+    hostname: rabbitmq-server
+    networks:
+      - testNet
+      - mailhost-net
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    restart: unless-stopped
+    volumes:
+      - testVol:/var/lib/rabbitmq
+  my-mongo:
+    image: mongo:latest
+    container_name: my-mongo
+    hostname: mongo-server
+    networks:
+      - testNet
+      - mailhost-net
+    ports:
+      - "27017:27017"
+    restart: unless-stopped
+    volumes:
+      - testVol:/data/db
+  mailhost:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mailhost-app
+    restart: unless-stopped
+    depends_on:
+      my-postgres:
+        condition: service_healthy
+      my-redis:
+        condition: service_healthy
+      my-rabbitmq:
+        condition: service_healthy
+      my-mongo:
+        condition: service_healthy
+    env_file:
+      - .env
+    volumes:
+      # Self-signed certs from scripts/gen-dev-certs.sh enable STARTTLS for SMTP AUTH, IMAP and POP3.
+      - ./certs:/certs:ro
+    ports:
+      - "25:25"     # SMTP for inbound mail (MX)
+      - "80:80"     # HTTP for mailhost web interface
+      - "110:110"   # POP3 (STLS required before PASS)
+      - "143:143"   # IMAP (STARTTLS required before LOGIN)
+      - "443:443"   # HTTPS for mailhost web interface
+      - "587:587"   # SMTP for authenticated submission (STARTTLS)
+    networks:
+      - mailhost-net
+
+volumes:
+  testVol:
+
+networks:
+  mailhost-net:
+    driver: bridge
+  testNet:
+    driver: bridge
