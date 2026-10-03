@@ -486,6 +486,9 @@ RETURNING id`, acct, email, first, last).Scan(&id)
 		if strings.TrimSpace(sub) == "" || len(sub) > 998 || strings.ContainsAny(sub, "\r\n") {
 			return "", fmt.Errorf("subject must be non-empty, under 998 characters, and contain no newlines")
 		}
+		if err := s.ValidateFromAddress(ctx, acct, from); err != nil {
+			return "", err
+		}
 		var id uuid.UUID
 		err := s.db.QueryRow(ctx, `
 INSERT INTO broadcasts (account_id, name, from_addr, subject, html, status, updated_at)

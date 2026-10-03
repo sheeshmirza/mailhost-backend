@@ -13,9 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"mailhost/internal/mailer"
 	"mailhost/internal/queue"
-	"mailhost/internal/validator"
 )
 
 type stepConfig struct {
@@ -137,25 +135,9 @@ func (s *Server) createAutomation(w http.ResponseWriter, r *http.Request) {
 	}
 
 	acct := accountID(r)
-	for _, f := range collectAutomationFroms(req.Steps) {
-		addr, err := mailer.ParseAddress(f)
-		if err != nil || !validator.IsValidEmail(addr.Address) {
-			writeError(w, http.StatusUnprocessableEntity, "invalid sender email address in automation steps: "+f)
-			return
-		}
-		dom := domainOf(addr.Address)
-		var domStatus string
-		err = s.db.QueryRow(r.Context(), `SELECT status FROM domains WHERE account_id = $1 AND lower(name) = $2`, acct, strings.ToLower(dom)).Scan(&domStatus)
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusUnprocessableEntity, "from domain \""+dom+"\" is not a registered domain on this account")
-			return
-		}
-		if err != nil {
-			s.internal(w, err)
-			return
-		}
-		if domStatus != "verified" {
-			writeError(w, http.StatusUnprocessableEntity, "from domain \""+dom+"\" is registered but not verified on this account")
+	if froms := collectAutomationFroms(req.Steps); len(froms) > 0 {
+		if err := s.ValidateFromAddresses(r.Context(), acct, froms); err != nil {
+			writeFromError(w, err)
 			return
 		}
 	}
@@ -374,25 +356,9 @@ func (s *Server) updateAutomation(w http.ResponseWriter, r *http.Request) {
 
 	acct := accountID(r)
 	if req.Steps != nil {
-		for _, f := range collectAutomationFroms(req.Steps) {
-			addr, err := mailer.ParseAddress(f)
-			if err != nil || !validator.IsValidEmail(addr.Address) {
-				writeError(w, http.StatusUnprocessableEntity, "invalid sender email address in automation steps: "+f)
-				return
-			}
-			dom := domainOf(addr.Address)
-			var domStatus string
-			err = s.db.QueryRow(r.Context(), `SELECT status FROM domains WHERE account_id = $1 AND lower(name) = $2`, acct, strings.ToLower(dom)).Scan(&domStatus)
-			if errors.Is(err, pgx.ErrNoRows) {
-				writeError(w, http.StatusUnprocessableEntity, "from domain \""+dom+"\" is not a registered domain on this account")
-				return
-			}
-			if err != nil {
-				s.internal(w, err)
-				return
-			}
-			if domStatus != "verified" {
-				writeError(w, http.StatusUnprocessableEntity, "from domain \""+dom+"\" is registered but not verified on this account")
+		if froms := collectAutomationFroms(req.Steps); len(froms) > 0 {
+			if err := s.ValidateFromAddresses(r.Context(), acct, froms); err != nil {
+				writeFromError(w, err)
 				return
 			}
 		}

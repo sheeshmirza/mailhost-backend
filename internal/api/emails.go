@@ -155,6 +155,32 @@ func (s *Server) signingKeys(ctx context.Context, account string, froms []string
 	return keys, nil
 }
 
+// ValidateFromAddress verifies that the given 'from' address contains a valid registered and verified domain on the account.
+func (s *Server) ValidateFromAddress(ctx context.Context, accountID, from string) error {
+	return s.ValidateFromAddresses(ctx, accountID, []string{from})
+}
+
+// ValidateFromAddresses verifies that all given 'from' addresses contain valid registered and verified domains on the account.
+func (s *Server) ValidateFromAddresses(ctx context.Context, accountID string, froms []string) error {
+	if len(froms) == 0 {
+		return nil
+	}
+	_, err := s.signingKeys(ctx, accountID, froms)
+	return err
+}
+
+// writeFromError writes a 422 response for a domain-validation error returned by ValidateFromAddress(es).
+// It unwraps validationError messages so they reach the caller verbatim, and falls through to a 500 for
+// unexpected database errors.
+func writeFromError(w http.ResponseWriter, err error) {
+	var ve validationError
+	if errors.As(err, &ve) {
+		writeError(w, http.StatusUnprocessableEntity, ve.msg)
+	} else {
+		writeError(w, http.StatusInternalServerError, "failed to validate sender domain")
+	}
+}
+
 func (s *Server) signer(id string, enc []byte) (crypto.Signer, error) {
 	if v, ok := s.signers.Get(id); ok {
 		return v, nil
