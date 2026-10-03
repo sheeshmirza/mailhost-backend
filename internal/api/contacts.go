@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -1312,3 +1313,223 @@ ORDER BY t.created_at DESC LIMIT $4`,
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
+
+// --- Bulk Contact Importer & Data Hygiene Suite ---
+
+type contactImportItem struct {
+	Email        string         `json:"email"`
+	FirstName    string         `json:"first_name"`
+	LastName     string         `json:"last_name"`
+	Unsubscribed bool           `json:"unsubscribed"`
+	Traits       map[string]any `json:"traits"`
+}
+
+type contactBulkImportReq struct {
+	AudienceID     string              `json:"audience_id"`
+	Contacts       []contactImportItem `json:"contacts"`
+	CSVData        string              `json:"csv_data"`
+	SkipDisposable bool                `json:"skip_disposable"`
+	SkipRoleBased  bool                `json:"skip_role_based"`
+}
+
+type contactBulkImportResp struct {
+	TotalProcessed int      `json:"total_processed"`
+	Imported       int      `json:"imported"`
+	Updated        int      `json:"updated"`
+	Invalid        int      `json:"invalid"`
+	Disposable     int      `json:"disposable"`
+	RoleBased      int      `json:"role_based"`
+	Errors         []string `json:"errors"`
+}
+
+func parseContactsFromCSV(csvText string) ([]contactImportItem, error) {
+	r := csv.NewReader(strings.NewReader(csvText))
+	r.TrimLeadingSpace = true
+	records, err := r.ReadAll()
+	if err != nil {
+		return nil, err
+	}
+	if len(records) == 0 {
+		return nil, nil
+	}
+
+	headerIdx := map[string]int{}
+	startRow := 0
+	hasHeader := false
+	for i, col := range records[0] {
+		colLower := strings.ToLower(strings.TrimSpace(col))
+		if colLower == "email" || colLower == "first_name" || colLower == "last_name" || colLower == "firstname" || colLower == "lastname" {
+			hasHeader = true
+			headerIdx[colLower] = i
+		}
+	}
+
+	if hasHeader {
+		startRow = 1
+	}
+
+	var items []contactImportItem
+	for i := startRow; i < len(records); i++ {
+		row := records[i]
+		if len(row) == 0 {
+			continue
+		}
+		item := contactImportItem{Traits: make(map[string]any)}
+		if hasHeader {
+			if idx, ok := headerIdx["email"]; ok && idx < len(row) {
+				item.Email = row[idx]
+			}
+			if idx, ok := headerIdx["first_name"]; ok && idx < len(row) {
+				item.FirstName = row[idx]
+			} else if idx, ok := headerIdx["firstname"]; ok && idx < len(row) {
+				item.FirstName = row[idx]
+			}
+			if idx, ok := headerIdx["last_name"]; ok && idx < len(row) {
+				item.LastName = row[idx]
+			} else if idx, ok := headerIdx["lastname"]; ok && idx < len(row) {
+				item.LastName = row[idx]
+			}
+		} else {
+			// Positional fallback: 0: email, 1: first_name, 2: last_name
+			if len(row) > 0 {
+				item.Email = row[0]
+			}
+			if len(row) > 1 {
+				item.FirstName = row[1]
+			}
+			if len(row) > 2 {
+				item.LastName = row[2]
+			}
+		}
+		if item.Email != "" {
+			items = append(items, item)
+		}
+	}
+	return items, nil
+}
+
+func (s *Server) importAudienceContacts(w http.ResponseWriter, r *http.Request) {
+	audIDStr := r.PathValue("audience_id")
+	s.executeBulkContactImport(w, r, audIDStr)
+}
+
+func (s *Server) bulkImportContacts(w http.ResponseWriter, r *http.Request) {
+	s.executeBulkContactImport(w, r, "")
+}
+
+func (s *Server) executeBulkContactImport(w http.ResponseWriter, r *http.Request, explicitAudienceID string) {
+	if !requireDeveloperOrAdmin(w, r) {
+		return
+	}
+	var req contactBulkImportReq
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	targetAudienceID := explicitAudienceID
+	if targetAudienceID == "" {
+		targetAudienceID = req.AudienceID
+	}
+
+	var parsedAudUUID *uuid.UUID
+	if targetAudienceID != "" {
+		parsed, err := uuid.Parse(targetAudienceID)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid audience id")
+			return
+		}
+		parsedAudUUID = &parsed
+	}
+
+	items := req.Contacts
+	if strings.TrimSpace(req.CSVData) != "" {
+		csvItems, err := parseContactsFromCSV(req.CSVData)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "malformed csv data: "+err.Error())
+			return
+		}
+		items = append(items, csvItems...)
+	}
+
+	if len(items) == 0 {
+		writeError(w, http.StatusBadRequest, "no contacts provided for import")
+		return
+	}
+	if len(items) > 5000 {
+		writeError(w, http.StatusBadRequest, "maximum 5,000 contacts allowed per batch import")
+		return
+	}
+
+	acct := accountID(r)
+	resp := contactBulkImportResp{
+		TotalProcessed: len(items),
+		Errors:         make([]string, 0),
+	}
+
+	ctx := r.Context()
+	for _, item := range items {
+		cleanEmail := strings.ToLower(strings.TrimSpace(item.Email))
+		if !validator.IsValidEmail(cleanEmail) {
+			resp.Invalid++
+			if len(resp.Errors) < 10 {
+				resp.Errors = append(resp.Errors, "invalid email syntax: "+item.Email)
+			}
+			continue
+		}
+
+		domain := domainOf(cleanEmail)
+		if validator.IsDisposableDomain(domain) {
+			resp.Disposable++
+			if req.SkipDisposable {
+				continue
+			}
+		}
+
+		if validator.IsRoleBasedEmail(cleanEmail) {
+			resp.RoleBased++
+			if req.SkipRoleBased {
+				continue
+			}
+		}
+
+		traitsJSON := []byte("{}")
+		if len(item.Traits) > 0 {
+			if b, err := json.Marshal(item.Traits); err == nil {
+				traitsJSON = b
+			}
+		}
+
+		var isInsert bool
+		err := s.db.QueryRow(ctx, `
+INSERT INTO contacts (account_id, audience_id, email, first_name, last_name, unsubscribed, traits, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, now())
+ON CONFLICT (account_id, email) DO UPDATE
+SET audience_id = COALESCE(EXCLUDED.audience_id, contacts.audience_id),
+    first_name = CASE WHEN EXCLUDED.first_name <> '' THEN EXCLUDED.first_name ELSE contacts.first_name END,
+    last_name = CASE WHEN EXCLUDED.last_name <> '' THEN EXCLUDED.last_name ELSE contacts.last_name END,
+    unsubscribed = EXCLUDED.unsubscribed,
+    traits = contacts.traits || EXCLUDED.traits,
+    updated_at = now()
+RETURNING (xmax = 0) AS is_insert`,
+			acct, parsedAudUUID, cleanEmail, strings.TrimSpace(item.FirstName), strings.TrimSpace(item.LastName), item.Unsubscribed, traitsJSON).Scan(&isInsert)
+
+		if err != nil {
+			resp.Invalid++
+			if len(resp.Errors) < 10 {
+				resp.Errors = append(resp.Errors, "database error for "+cleanEmail+": "+err.Error())
+			}
+			continue
+		}
+
+		if isInsert {
+			resp.Imported++
+		} else {
+			resp.Updated++
+		}
+	}
+
+	s.audit(ctx, acct, "bulk_import", "contacts", acct, r)
+	writeJSON(w, http.StatusOK, resp)
+}
+

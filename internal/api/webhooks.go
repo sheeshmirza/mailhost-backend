@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -458,3 +459,199 @@ WHERE id = $1 AND status = 'sending'`, d.id, status, webhookRetryDelay(d.attempt
 	}
 	wg.Wait()
 }
+
+// --- Webhook Testing & Delivery Telemetry ---
+
+type testWebhookReq struct {
+	EventType string         `json:"event_type"`
+	Payload   map[string]any `json:"payload"`
+}
+
+func (s *Server) testWebhook(w http.ResponseWriter, r *http.Request) {
+	if !requireDeveloperOrAdmin(w, r) {
+		return
+	}
+	idStr := r.PathValue("id")
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid webhook id")
+		return
+	}
+
+	var req testWebhookReq
+	_ = decodeJSON(r, &req)
+
+	eventType := strings.TrimSpace(req.EventType)
+	if eventType == "" {
+		eventType = "email.delivered"
+	}
+
+	acct := accountID(r)
+	var targetURL, secretText string
+	err = s.rdb.QueryRow(r.Context(),
+		`SELECT url, signing_secret FROM webhooks WHERE id = $1 AND account_id = $2`,
+		id, acct).Scan(&targetURL, &secretText)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "webhook not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "database error")
+		return
+	}
+
+	secret, _, err := s.openSigningSecret(secretText)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to decode signing secret")
+		return
+	}
+
+	eventData := req.Payload
+	if eventData == nil {
+		eventData = map[string]any{
+			"email_id":    uuid.New().String(),
+			"from":        "notifications@example.com",
+			"to":          []string{"recipient@example.com"},
+			"subject":     "Webhook Test Ping",
+			"created_at":  time.Now().UTC().Format(time.RFC3339),
+			"environment": "test",
+		}
+	}
+
+	eventPayload := map[string]any{
+		"id":         "evt_test_" + uuid.New().String()[:8],
+		"type":       eventType,
+		"created_at": time.Now().UTC().Format(time.RFC3339),
+		"data":       eventData,
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+
+	statusCode, latencyMs, respSnippet, deliveryErr := s.webhookClient.DeliverOnce(ctx, targetURL, secret, eventPayload)
+
+	success := deliveryErr == nil && statusCode >= 200 && statusCode < 300
+	errMsg := ""
+	if deliveryErr != nil {
+		errMsg = deliveryErr.Error()
+	} else if !success {
+		errMsg = fmt.Sprintf("HTTP %d", statusCode)
+	}
+
+	s.audit(r.Context(), acct, "test", "webhook", id.String(), r)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success":       success,
+		"status_code":   statusCode,
+		"latency_ms":    latencyMs,
+		"response_body": respSnippet,
+		"error":         errMsg,
+		"dispatched_at": time.Now().UTC().Format(time.RFC3339),
+	})
+}
+
+func (s *Server) listWebhookDeliveries(w http.ResponseWriter, r *http.Request) {
+	idStr := r.PathValue("id")
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid webhook id")
+		return
+	}
+
+	acct := accountID(r)
+	var exists bool
+	err = s.rdb.QueryRow(r.Context(), `SELECT true FROM webhooks WHERE id = $1 AND account_id = $2`, id, acct).Scan(&exists)
+	if err != nil || !exists {
+		writeError(w, http.StatusNotFound, "webhook not found")
+		return
+	}
+
+	limit, before, ok := page(w, r)
+	if !ok {
+		return
+	}
+
+	rows, err := s.rdb.Query(r.Context(), `
+SELECT id, event_type, status, attempts, last_error, created_at, updated_at
+FROM webhook_deliveries
+WHERE webhook_id = $1 AND created_at < $2
+ORDER BY created_at DESC
+LIMIT $3`, id, before, limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+	defer rows.Close()
+
+	data := make([]map[string]any, 0)
+	for rows.Next() {
+		var did uuid.UUID
+		var eventType, status string
+		var attempts int
+		var lastError *string
+		var createdAt, updatedAt time.Time
+		if err := rows.Scan(&did, &eventType, &status, &attempts, &lastError, &createdAt, &updatedAt); err != nil {
+			writeError(w, http.StatusInternalServerError, "scan failed")
+			return
+		}
+		data = append(data, map[string]any{
+			"id":         did.String(),
+			"event_type": eventType,
+			"status":     status,
+			"attempts":   attempts,
+			"last_error": lastError,
+			"created_at": createdAt.Format(time.RFC3339Nano),
+			"updated_at": updatedAt.Format(time.RFC3339Nano),
+		})
+	}
+
+	resp := map[string]any{
+		"object": "list",
+		"data":   data,
+	}
+	if len(data) == limit {
+		resp["next_before"] = data[len(data)-1]["created_at"]
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) retryWebhookDelivery(w http.ResponseWriter, r *http.Request) {
+	if !requireDeveloperOrAdmin(w, r) {
+		return
+	}
+	wIDStr := r.PathValue("id")
+	wID, err := uuid.Parse(wIDStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid webhook id")
+		return
+	}
+	dIDStr := r.PathValue("delivery_id")
+	dID, err := uuid.Parse(dIDStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid delivery id")
+		return
+	}
+
+	acct := accountID(r)
+	tag, err := s.db.Exec(r.Context(), `
+UPDATE webhook_deliveries d
+SET status = 'queued', next_attempt_at = now(), locked_until = NULL, updated_at = now()
+FROM webhooks w
+WHERE d.id = $1 AND d.webhook_id = $2 AND w.id = d.webhook_id AND w.account_id = $3`,
+		dID, wID, acct)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "retry failed")
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		writeError(w, http.StatusNotFound, "delivery not found")
+		return
+	}
+
+	s.audit(r.Context(), acct, "retry", "webhook_delivery", dID.String(), r)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"id":      dID.String(),
+		"status":  "queued",
+		"retried": true,
+	})
+}
+

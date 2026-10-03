@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"mailhost/internal/queue"
 	"mailhost/internal/validator"
 )
 
@@ -650,3 +651,180 @@ func lookupVar(vars map[string]any, key string) (any, bool) {
 	}
 	return nil, false
 }
+
+// --- Live Template Variable Playground & Instant Test Send ---
+
+type templatePreviewReq struct {
+	Variables map[string]any `json:"variables"`
+}
+
+type templateTestSendReq struct {
+	To        string         `json:"to"`
+	From      string         `json:"from"`
+	Variables map[string]any `json:"variables"`
+}
+
+func (s *Server) previewTemplate(w http.ResponseWriter, r *http.Request) {
+	idStr := r.PathValue("id")
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid template id")
+		return
+	}
+
+	var req templatePreviewReq
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	acct := accountID(r)
+	var name, subject, htmlContent, textContent string
+	var publishedHTML, publishedText, publishedSubject *string
+	err = s.rdb.QueryRow(r.Context(), `
+SELECT name, subject, html_content, text_content, published_html, published_text, published_subject
+FROM templates WHERE id = $1 AND account_id = $2`, id, acct).Scan(&name, &subject, &htmlContent, &textContent, &publishedHTML, &publishedText, &publishedSubject)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "template not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "database error")
+		return
+	}
+
+	sub := subject
+	h := htmlContent
+	t := textContent
+	if sub == "" && publishedSubject != nil {
+		sub = *publishedSubject
+	}
+	if h == "" && publishedHTML != nil {
+		h = *publishedHTML
+	}
+	if t == "" && publishedText != nil {
+		t = *publishedText
+	}
+
+	rendSub, rendHTML, rendText := RenderTemplate(sub, h, t, req.Variables)
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"id":          id.String(),
+		"name":        name,
+		"subject":     rendSub,
+		"html":        rendHTML,
+		"text":        rendText,
+		"raw_subject": sub,
+		"variables":   req.Variables,
+	})
+}
+
+func (s *Server) testSendTemplate(w http.ResponseWriter, r *http.Request) {
+	if !requireDeveloperOrAdmin(w, r) {
+		return
+	}
+	idStr := r.PathValue("id")
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid template id")
+		return
+	}
+
+	var req templateTestSendReq
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	toAddr := strings.TrimSpace(req.To)
+	if !validator.IsValidEmail(toAddr) {
+		writeError(w, http.StatusUnprocessableEntity, "valid recipient 'to' email address required")
+		return
+	}
+
+	acct := accountID(r)
+	var name, subject, htmlContent, textContent string
+	var publishedHTML, publishedText, publishedSubject *string
+	err = s.rdb.QueryRow(r.Context(), `
+SELECT name, subject, html_content, text_content, published_html, published_text, published_subject
+FROM templates WHERE id = $1 AND account_id = $2`, id, acct).Scan(&name, &subject, &htmlContent, &textContent, &publishedHTML, &publishedText, &publishedSubject)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "template not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "database error")
+		return
+	}
+
+	sub := subject
+	h := htmlContent
+	t := textContent
+	if sub == "" && publishedSubject != nil {
+		sub = *publishedSubject
+	}
+	if h == "" && publishedHTML != nil {
+		h = *publishedHTML
+	}
+	if t == "" && publishedText != nil {
+		t = *publishedText
+	}
+
+	rendSub, rendHTML, rendText := RenderTemplate(sub, h, t, req.Variables)
+	if rendSub == "" {
+		rendSub = "Test Template: " + name
+	}
+	testSubject := "[TEST] " + rendSub
+
+	fromAddr := strings.TrimSpace(req.From)
+	if fromAddr == "" {
+		var verifiedDomain string
+		err := s.rdb.QueryRow(r.Context(), `SELECT name FROM domains WHERE account_id = $1 AND status = 'verified' ORDER BY created_at ASC LIMIT 1`, acct).Scan(&verifiedDomain)
+		if err != nil || verifiedDomain == "" {
+			writeError(w, http.StatusUnprocessableEntity, "no verified domain found on this account to send from; please register and verify a domain first")
+			return
+		}
+		fromAddr = "test@" + verifiedDomain
+	}
+
+	keys, err := s.signingKeys(r.Context(), acct, []string{fromAddr})
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	if len(keys) == 0 {
+		writeError(w, http.StatusUnprocessableEntity, "from domain is not verified")
+		return
+	}
+
+	emailReq := sendReq{
+		From:    fromAddr,
+		To:      []string{toAddr},
+		Subject: testSubject,
+		HTML:    rendHTML,
+		Text:    rendText,
+	}
+	e, err := s.prepare(&emailReq, nil, keys, uuid.Nil)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+
+	response := map[string]any{
+		"id":             e.ID,
+		"test_delivered": true,
+		"recipient":      toAddr,
+		"from":           fromAddr,
+		"subject":        testSubject,
+		"status":         "queued",
+	}
+	body, err := s.enqueueRequest(r, []queue.Email{e}, emailReq, response)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to enqueue test email: "+err.Error())
+		return
+	}
+
+	s.audit(r.Context(), acct, "test_send", "template", id.String(), r)
+	writeJSONBytes(w, http.StatusOK, body)
+}
+

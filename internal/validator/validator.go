@@ -90,3 +90,40 @@ func IsValidVariableName(name string) bool {
 func IsValidTriggerType(trigger string) bool {
 	return validTriggerTypes[strings.ToLower(strings.TrimSpace(trigger))]
 }
+
+var disposableDomains = map[string]bool{
+	"mailinator.com": true, "guerrillamail.com": true, "tempmail.com": true,
+	"10minutemail.com": true, "throwawaymail.com": true, "sharklasers.com": true,
+	"yopmail.com": true, "trashmail.com": true, "temp-mail.org": true,
+	"fakeinbox.com": true, "getairmail.com": true, "dispostable.com": true,
+	"crazymailing.com": true, "mohmal.com": true, "burnermail.io": true,
+	"inboxkitten.com": true, "nada.ltd": true, "getnada.com": true,
+}
+
+// IsDisposableDomain detects temporary, burner, and disposable inbox domains.
+func IsDisposableDomain(domain string) bool {
+	return disposableDomains[strings.ToLower(strings.TrimSpace(domain))]
+}
+
+var rolePrefixes = map[string]bool{
+	"admin": true, "support": true, "sales": true, "billing": true,
+	"info": true, "contact": true, "help": true, "postmaster": true,
+	"hostmaster": true, "abuse": true, "webmaster": true, "marketing": true,
+	"security": true, "compliance": true, "legal": true, "jobs": true,
+	"careers": true, "press": true, "media": true, "team": true,
+}
+
+// IsRoleBasedEmail identifies team, department, or administrative aliases.
+func IsRoleBasedEmail(email string) bool {
+	clean := strings.ToLower(strings.TrimSpace(email))
+	parts := strings.Split(clean, "@")
+	if len(parts) != 2 {
+		return false
+	}
+	local := parts[0]
+	if idx := strings.IndexByte(local, '+'); idx != -1 {
+		local = local[:idx]
+	}
+	return rolePrefixes[local]
+}
+

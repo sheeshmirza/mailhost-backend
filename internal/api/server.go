@@ -198,6 +198,7 @@ func (s *Server) Handler() http.Handler {
 		"GET /v1/audiences/{id}":                           s.getAudience,
 		"DELETE /v1/audiences/{id}":                        s.deleteAudience,
 		"POST /v1/audiences/{audience_id}/contacts":        s.createContact,
+		"POST /v1/audiences/{audience_id}/import":          s.importAudienceContacts,
 		"GET /v1/audiences/{audience_id}/contacts":         s.listContacts,
 		"GET /v1/audiences/{audience_id}/contacts/{id}":    s.getContact,
 		"PATCH /v1/audiences/{audience_id}/contacts/{id}":  s.updateContact,
@@ -205,6 +206,7 @@ func (s *Server) Handler() http.Handler {
 
 		// Contacts (global)
 		"POST /v1/contacts":                              s.createContact,
+		"POST /v1/contacts/bulk-import":                  s.bulkImportContacts,
 		"GET /v1/contacts":                               s.listContacts,
 		"GET /v1/contacts/{id}":                          s.getContact,
 		"PATCH /v1/contacts/{id}":                        s.updateContact,
@@ -249,6 +251,8 @@ func (s *Server) Handler() http.Handler {
 		"POST /v1/templates/{id}/publish":            s.publishTemplate,
 		"GET /v1/templates/{id}/versions":            s.listTemplateVersions,
 		"POST /v1/templates/{id}/rollback/{version}": s.rollbackTemplate,
+		"POST /v1/templates/{id}/preview":            s.previewTemplate,
+		"POST /v1/templates/{id}/test-send":          s.testSendTemplate,
 
 		// Dedicated IPs & Auto-Warming
 		"GET /v1/ips":                  s.listDedicatedIPs,
@@ -262,6 +266,9 @@ func (s *Server) Handler() http.Handler {
 
 		// React Email & HTML Boilerplate Rendering
 		"POST /v1/render": s.renderEmail,
+
+		// Deliverability & Spam Pre-Flight
+		"POST /v1/deliverability/inspect": s.inspectDeliverability,
 
 		// Remote MCP Server
 		"POST /mcp": s.handleMCP,
@@ -282,12 +289,16 @@ func (s *Server) Handler() http.Handler {
 		"GET /v1/events/{id}": s.getEvent,
 
 		// Webhooks
-		"POST /v1/webhooks":        s.createWebhook,
-		"GET /v1/webhooks":         s.listWebhooks,
-		"GET /v1/webhooks/{id}":    s.getWebhook,
-		"PATCH /v1/webhooks/{id}":  s.updateWebhook,
-		"DELETE /v1/webhooks/{id}": s.deleteWebhook,
+		"POST /v1/webhooks":                                       s.createWebhook,
+		"GET /v1/webhooks":                                        s.listWebhooks,
+		"GET /v1/webhooks/{id}":                                   s.getWebhook,
+		"PATCH /v1/webhooks/{id}":                                 s.updateWebhook,
+		"DELETE /v1/webhooks/{id}":                                s.deleteWebhook,
+		"POST /v1/webhooks/{id}/test":                             s.testWebhook,
+		"GET /v1/webhooks/{id}/deliveries":                        s.listWebhookDeliveries,
+		"POST /v1/webhooks/{id}/deliveries/{delivery_id}/retry":   s.retryWebhookDelivery,
 
+		"POST /v1/suppressions":             s.createSuppression,
 		"GET /v1/suppressions":              s.listSuppressions,
 		"DELETE /v1/suppressions/{address}": s.deleteSuppression,
 

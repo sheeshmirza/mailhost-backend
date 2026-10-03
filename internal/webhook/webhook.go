@@ -165,3 +165,35 @@ func (c *Client) Deliver(ctx context.Context, target string, secret []byte, even
 	}
 	return lastErr
 }
+
+// DeliverOnce performs a single non-retried dispatch attempt for live testing, returning HTTP status code, latency in ms, response snippet, and error.
+func (c *Client) DeliverOnce(ctx context.Context, target string, secret []byte, event any) (int, int64, string, error) {
+	body, err := json.Marshal(event)
+	if err != nil {
+		return 0, 0, "", err
+	}
+	ts := strconv.FormatInt(time.Now().Unix(), 10)
+	mac := hmac.New(sha256.New, secret)
+	mac.Write([]byte(ts + "."))
+	mac.Write(body)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(body))
+	if err != nil {
+		return 0, 0, "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "mailhost-webhook-test/1")
+	req.Header.Set("X-Mailhost-Timestamp", ts)
+	req.Header.Set("X-Mailhost-Signature", "v1="+hex.EncodeToString(mac.Sum(nil)))
+
+	start := time.Now()
+	resp, err := c.http.Do(req)
+	latency := time.Since(start).Milliseconds()
+	if err != nil {
+		return 0, latency, "", err
+	}
+	defer resp.Body.Close()
+	snippetBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	return resp.StatusCode, latency, string(snippetBytes), nil
+}
+
