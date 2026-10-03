@@ -26,6 +26,7 @@ import (
 	"mailhost/internal/docstore"
 	"mailhost/internal/mailbox"
 	"mailhost/internal/mailer"
+	"mailhost/internal/metrics"
 	"mailhost/internal/queue"
 	"mailhost/internal/secretbox"
 	"mailhost/internal/webhook"
@@ -432,6 +433,7 @@ RETURNING id, created_at`,
 	if err != nil {
 		return err
 	}
+	metrics.Default.RecordInbound()
 	for _, rcpt := range rcpts {
 		_, _ = mailbox.DeliverMessage(ctx, b.db, d.accountID, rcpt, "INBOX", raw, nil, received)
 	}

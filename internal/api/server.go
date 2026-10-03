@@ -443,8 +443,8 @@ type roleKey struct{}
 type domainKey struct{}
 type reqIDKey struct{}
 
-func keyDomainID(r *http.Request) string {
-	if v, ok := r.Context().Value(domainKey{}).(string); ok {
+func keyDomainID(ctx context.Context) string {
+	if v, ok := ctx.Value(domainKey{}).(string); ok {
 		return v
 	}
 	return ""
@@ -534,15 +534,6 @@ func requireSender(w http.ResponseWriter, r *http.Request) bool {
 	}
 	writeError(w, http.StatusForbidden, "forbidden: insufficient permissions for this action")
 	return false
-}
-
-func requireUserSession(w http.ResponseWriter, r *http.Request) (string, bool) {
-	uid := userID(r)
-	if uid == "" {
-		writeError(w, http.StatusUnauthorized, "endpoint requires user session authentication")
-		return "", false
-	}
-	return uid, true
 }
 
 func hashKey(k string) []byte {

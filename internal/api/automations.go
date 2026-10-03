@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"mailhost/internal/queue"
+	"mailhost/internal/validator"
 )
 
 type stepConfig struct {
@@ -115,13 +116,7 @@ func (s *Server) createAutomation(w http.ResponseWriter, r *http.Request) {
 	if trigType == "" {
 		trigType = "event"
 	}
-	validTriggers := map[string]bool{
-		"event":           true,
-		"contact.created": true,
-		"email.opened":    true,
-		"email.clicked":   true,
-	}
-	if !validTriggers[trigType] {
+	if !validator.IsValidTriggerType(trigType) {
 		writeError(w, http.StatusUnprocessableEntity, "invalid trigger type; supported: event, contact.created, email.opened, email.clicked")
 		return
 	}
@@ -316,13 +311,7 @@ func (s *Server) updateAutomation(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Trigger.Type != "" {
 		trigType := strings.ToLower(strings.TrimSpace(req.Trigger.Type))
-		validTriggers := map[string]bool{
-			"event":           true,
-			"contact.created": true,
-			"email.opened":    true,
-			"email.clicked":   true,
-		}
-		if !validTriggers[trigType] {
+		if !validator.IsValidTriggerType(trigType) {
 			writeError(w, http.StatusUnprocessableEntity, "invalid trigger type; supported: event, contact.created, email.opened, email.clicked")
 			return
 		}

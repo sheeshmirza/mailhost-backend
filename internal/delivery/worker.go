@@ -21,6 +21,7 @@ import (
 	"mailhost/internal/cache"
 	"mailhost/internal/config"
 	"mailhost/internal/db"
+	"mailhost/internal/metrics"
 	"mailhost/internal/queue"
 )
 
@@ -279,6 +280,7 @@ func (w *Worker) process(j job) {
 		next := time.Now().Add(backoff(j.Attempts))
 		c.Status, c.Detail, c.Next = "deferred", errText(err), &next
 	}
+	metrics.Default.RecordEmail(c.Status)
 	if err != nil {
 		w.log.Warn("delivery attempt failed", "delivery_id", j.ID, "attempt", j.Attempts, "err", err)
 	}

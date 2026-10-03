@@ -3,7 +3,6 @@ package rediscache
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"strconv"
 	"strings"
@@ -64,14 +63,6 @@ func (c *Client) Set(ctx context.Context, key string, val []byte, ttl time.Durat
 	return c.rdb.Set(ctx, key, val, ttl).Err()
 }
 
-// SetNX stores a value only if the key does not already exist (atomic operation).
-func (c *Client) SetNX(ctx context.Context, key string, val []byte, ttl time.Duration) (bool, error) {
-	if c == nil || c.rdb == nil {
-		return false, errors.New("redis client not initialized")
-	}
-	return c.rdb.SetNX(ctx, key, val, ttl).Result()
-}
-
 // Delete removes one or more keys immediately.
 func (c *Client) Delete(ctx context.Context, keys ...string) error {
 	if c == nil || c.rdb == nil || len(keys) == 0 {
@@ -118,53 +109,12 @@ func (c *Client) AddSuppression(ctx context.Context, accountID, address string) 
 	return c.rdb.SAdd(ctx, "sups:"+accountID, strings.ToLower(strings.TrimSpace(address))).Err()
 }
 
-// IsSuppressed checks if an email address is in the account's Redis suppression set in O(1) time.
-func (c *Client) IsSuppressed(ctx context.Context, accountID, address string) (bool, error) {
-	if c == nil || c.rdb == nil {
-		return false, nil
-	}
-	return c.rdb.SIsMember(ctx, "sups:"+accountID, strings.ToLower(strings.TrimSpace(address))).Result()
-}
-
 // RemoveSuppression removes an address from the account's Redis suppression set.
 func (c *Client) RemoveSuppression(ctx context.Context, accountID, address string) error {
 	if c == nil || c.rdb == nil {
 		return nil
 	}
 	return c.rdb.SRem(ctx, "sups:"+accountID, strings.ToLower(strings.TrimSpace(address))).Err()
-}
-
-// PublishEvent broadcasts an event message over a Redis Pub/Sub channel.
-func (c *Client) PublishEvent(ctx context.Context, channel string, payload any) error {
-	if c == nil || c.rdb == nil {
-		return nil
-	}
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-	return c.rdb.Publish(ctx, channel, data).Err()
-}
-
-// SubscribeEvent subscribes to a Redis Pub/Sub channel, returning a message channel and a cleanup function.
-func (c *Client) SubscribeEvent(ctx context.Context, channel string) (<-chan []byte, func(), error) {
-	if c == nil || c.rdb == nil {
-		return nil, nil, errors.New("redis client not initialized")
-	}
-	pubsub := c.rdb.Subscribe(ctx, channel)
-	ch := make(chan []byte, 100)
-
-	go func() {
-		defer close(ch)
-		for msg := range pubsub.Channel() {
-			ch <- []byte(msg.Payload)
-		}
-	}()
-
-	cleanup := func() {
-		_ = pubsub.Close()
-	}
-	return ch, cleanup, nil
 }
 
 // Close closes the underlying connection pool.

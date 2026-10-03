@@ -11,29 +11,20 @@ import (
 	"time"
 )
 
-// Registry stores process-local counters and gauges exposed in Prometheus format.
+// counter stores an atomically updated uint64 metric.
 type counter struct{ val uint64 }
 
 func (c *counter) inc()         { atomic.AddUint64(&c.val, 1) }
 func (c *counter) add(n uint64) { atomic.AddUint64(&c.val, n) }
 func (c *counter) get() uint64  { return atomic.LoadUint64(&c.val) }
 
-type gauge struct{ val int64 }
-
-func (g *gauge) set(n int64) { atomic.StoreInt64(&g.val, n) }
-func (g *gauge) inc()        { atomic.AddInt64(&g.val, 1) }
-func (g *gauge) dec()        { atomic.AddInt64(&g.val, -1) }
-func (g *gauge) get() int64  { return atomic.LoadInt64(&g.val) }
-
+// Registry stores process-local counters exposed in Prometheus format.
 type Registry struct {
 	mu           sync.RWMutex
 	httpRequests map[string]*counter // "method:status" -> count
 	httpDuration map[string]*counter // "method" -> total duration ms
 	emailEvents  map[string]*counter // "status" -> count
-	queueDepth   map[string]*gauge   // "priority" -> current depth
 	inboundMsgs  counter
-	activeConns  gauge
-	dbConns      gauge
 	startTime    time.Time
 }
 
@@ -46,7 +37,6 @@ func NewRegistry() *Registry {
 		httpRequests: make(map[string]*counter),
 		httpDuration: make(map[string]*counter),
 		emailEvents:  make(map[string]*counter),
-		queueDepth:   make(map[string]*gauge),
 		startTime:    time.Now(),
 	}
 }
@@ -107,27 +97,7 @@ func (r *Registry) RecordInbound() {
 	r.inboundMsgs.inc()
 }
 
-// SetDBConnections records the current number of active database connections.
-func (r *Registry) SetDBConnections(active int64) {
-	r.dbConns.set(active)
-}
-
-// SetQueueDepth records the current queue depth for a priority class.
-func (r *Registry) SetQueueDepth(priority string, depth int64) {
-	r.mu.RLock()
-	g, ok := r.queueDepth[priority]
-	r.mu.RUnlock()
-	if !ok {
-		r.mu.Lock()
-		if g = r.queueDepth[priority]; g == nil {
-			g = &gauge{}
-			r.queueDepth[priority] = g
-		}
-		r.mu.Unlock()
-	}
-	g.set(depth)
-}
-
+// WritePrometheus writes current metrics in Prometheus exposition text format.
 func (r *Registry) WritePrometheus(w io.Writer) {
 	fmt.Fprintf(w, "# HELP mailhost_uptime_seconds Number of seconds the service has been running.\n")
 	fmt.Fprintf(w, "# TYPE mailhost_uptime_seconds gauge\n")
@@ -155,23 +125,14 @@ func (r *Registry) WritePrometheus(w io.Writer) {
 	for status, c := range r.emailEvents {
 		fmt.Fprintf(w, "mailhost_email_events_total{status=\"%s\"} %d\n", status, c.get())
 	}
-
-	fmt.Fprintf(w, "\n# HELP mailhost_queue_depth Current number of messages waiting in the delivery queue.\n")
-	fmt.Fprintf(w, "# TYPE mailhost_queue_depth gauge\n")
-	for prio, g := range r.queueDepth {
-		fmt.Fprintf(w, "mailhost_queue_depth{priority=\"%s\"} %d\n", prio, g.get())
-	}
 	r.mu.RUnlock()
 
 	fmt.Fprintf(w, "\n# HELP mailhost_inbound_emails_total Total incoming emails received by the SMTP MTA.\n")
 	fmt.Fprintf(w, "# TYPE mailhost_inbound_emails_total counter\n")
 	fmt.Fprintf(w, "mailhost_inbound_emails_total %d\n", r.inboundMsgs.get())
-
-	fmt.Fprintf(w, "\n# HELP mailhost_db_connections Active database pool connections.\n")
-	fmt.Fprintf(w, "# TYPE mailhost_db_connections gauge\n")
-	fmt.Fprintf(w, "mailhost_db_connections %d\n", r.dbConns.get())
 }
 
+// Handler returns an HTTP handler serving Prometheus metrics.
 func Handler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")

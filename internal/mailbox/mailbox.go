@@ -312,19 +312,6 @@ ORDER BY uid ASC`, mailboxID)
 	return msgs, nil
 }
 
-// GetMessageByUID retrieves a single message by its UID.
-func GetMessageByUID(ctx context.Context, db *pgxpool.Pool, mailboxID uuid.UUID, uid uint32) (*Message, error) {
-	var m Message
-	err := db.QueryRow(ctx, `
-SELECT id, mailbox_id, uid, size, flags, date, raw, created_at
-FROM mailbox_messages
-WHERE mailbox_id = $1 AND uid = $2`, mailboxID, uid).Scan(&m.ID, &m.MailboxID, &m.UID, &m.Size, &m.Flags, &m.Date, &m.Raw, &m.CreatedAt)
-	if err != nil {
-		return nil, err
-	}
-	return &m, nil
-}
-
 // FlagOp specifies flag modification operation.
 type FlagOp int
 

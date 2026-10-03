@@ -83,11 +83,6 @@ func DenyInternal(_, address string, _ syscall.RawConn) error {
 // Client posts signed webhook events using an SSRF-resistant HTTP transport.
 type Client struct{ http *http.Client }
 
-// New creates a webhook client that rejects connections to non-public addresses.
-func New() *Client {
-	return NewWithSecurity(false)
-}
-
 // NewWithSecurity creates a webhook client that rejects connections to non-public addresses unless allowPrivate is true.
 func NewWithSecurity(allowPrivate bool) *Client {
 	var control func(network, address string, c syscall.RawConn) error
@@ -107,15 +102,6 @@ func NewWithSecurity(allowPrivate bool) *Client {
 		Timeout:       15 * time.Second,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}}
-}
-
-// NewWithHTTP returns a Client using the provided http.Client.
-func NewWithHTTP(client *http.Client) *Client {
-	return &Client{http: client}
-}
-
-func ValidateURL(raw string) error {
-	return ValidateURLWithPrivate(raw, false)
 }
 
 func ValidateURLWithPrivate(raw string, allowPrivate bool) error {

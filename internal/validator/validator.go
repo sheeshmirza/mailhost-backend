@@ -5,8 +5,6 @@ import (
 	"net/mail"
 	"regexp"
 	"strings"
-
-	"github.com/google/uuid"
 )
 
 var (
@@ -33,12 +31,6 @@ var validTriggerTypes = map[string]bool{
 	"contact.created": true,
 	"email.opened":    true,
 	"email.clicked":   true,
-}
-
-// IsValidUUID validates whether a string conforms to RFC 4122 UUID syntax.
-func IsValidUUID(s string) bool {
-	_, err := uuid.Parse(strings.TrimSpace(s))
-	return err == nil
 }
 
 // IsValidEmail verifies standard RFC 5322 email syntax and ensures non-empty local and domain segments.

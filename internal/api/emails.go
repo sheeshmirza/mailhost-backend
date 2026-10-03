@@ -145,7 +145,7 @@ func (s *Server) signingKeys(ctx context.Context, account string, froms []string
 			return nil, invalid("from domain %q is not a verified domain on this account", name)
 		}
 	}
-	if restrictedDom, ok := ctx.Value(domainKey{}).(string); ok && restrictedDom != "" {
+	if restrictedDom := keyDomainID(ctx); restrictedDom != "" {
 		for domName, k := range keys {
 			if k.domainID.String() != restrictedDom {
 				return nil, invalid("API key is restricted to domain %s; cannot send from %s", restrictedDom, domName)
