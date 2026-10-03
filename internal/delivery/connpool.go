@@ -228,38 +228,51 @@ func (p *connPool) closeAll() {
 	}
 }
 
-func (w *Worker) dial(ctx context.Context, host, port string, relay bool) (*pooledConn, error) {
-	d := net.Dialer{Timeout: 30 * time.Second}
-	if !relay && !w.cfg.AllowPrivateDelivery {
+func (w *Worker) dial(ctx context.Context, host, port string) (*pooledConn, error) {
+	d := net.Dialer{
+		Timeout:   15 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}
+	if !w.cfg.AllowPrivateDelivery {
 		d.Control = webhook.DenyInternal
 	}
-	conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(host, port))
+	addr := net.JoinHostPort(host, port)
+	conn, err := d.DialContext(ctx, "tcp", addr)
+	if err != nil {
+		var netErr net.Error
+		if errors.As(err, &netErr) && netErr.Timeout() {
+			// Fallback to explicit IPv4 dial if dual-stack timed out
+			if conn4, err4 := d.DialContext(ctx, "tcp4", addr); err4 == nil {
+				conn = conn4
+				err = nil
+			}
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
-	conn.SetDeadline(time.Now().Add(time.Minute))
+	_ = conn.SetDeadline(time.Now().Add(time.Minute))
+
 	c, err := smtp.NewClient(conn, host)
 	if err != nil {
-		conn.Close()
+		_ = conn.Close()
 		return nil, err
 	}
+
 	fail := func(err error) (*pooledConn, error) {
-		c.Close()
+		_ = c.Close()
 		return nil, err
 	}
-	if err := c.Hello(w.cfg.Hostname); err != nil {
+	hostname := w.cfg.Hostname
+	if hostname == "" {
+		hostname = "localhost"
+	}
+	if err := c.Hello(hostname); err != nil {
 		return fail(err)
 	}
 	if ok, _ := c.Extension("STARTTLS"); ok {
 		if err := c.StartTLS(&tls.Config{ServerName: host, MinVersion: tls.VersionTLS12}); err != nil {
 			return fail(fmt.Errorf("starttls %s: %w", host, err))
-		}
-	} else if relay && !w.cfg.AllowPrivateDelivery {
-		return fail(errors.New("relay does not support STARTTLS"))
-	}
-	if relay && w.cfg.RelayUsername != "" {
-		if err := c.Auth(smtp.PlainAuth("", w.cfg.RelayUsername, w.cfg.RelayPassword, host)); err != nil {
-			return fail(err)
 		}
 	}
 	return &pooledConn{c: c, conn: conn, created: time.Now()}, nil

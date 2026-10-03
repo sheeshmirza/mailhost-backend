@@ -128,7 +128,6 @@ Values you must set by hand:
 |---|---|
 | `MAIL_HOSTNAME` / `HOSTNAME` | Public FQDN. Always set `MAIL_HOSTNAME`: inside Docker, `HOSTNAME` defaults to the container ID. |
 | `AUTH_EMAIL_SMTP_ADDR`, `AUTH_EMAIL_SMTP_USERNAME`, `AUTH_EMAIL_SMTP_PASSWORD`, `AUTH_EMAIL_FROM` | Verification / password-reset mail. Use a provider on port 587 (STARTTLS is used automatically; credentials are only sent over TLS). **Required**: invited members can only join an organization after verifying their email. |
-| `RELAY_HOST`, `RELAY_USERNAME`, `RELAY_PASSWORD` | Optional smarthost. Leave empty for direct-to-MX delivery (needs outbound port 25 open and a clean IP). |
 | `SUPPORT_EMAIL` | Shown in API docs. |
 
 Settings that must keep their production values:
@@ -344,7 +343,7 @@ accounts and sends mail.
 
 - [ ] `ALLOW_PRIVATE_DELIVERY=false`, `SKIP_DNS_VERIFICATION=false`, unique `MASTER_KEY` backed up, `.env.production` is `chmod 600`
 - [ ] `MAIL_HOSTNAME` has A + matching PTR record; certificate valid for it
-- [ ] Outbound TCP 25 allowed by the provider (or `RELAY_HOST` configured)
+- [ ] Outbound TCP 25 allowed by hosting provider/firewall for direct MX delivery
 - [ ] `AUTH_EMAIL_*` configured and a verification email received
 - [ ] Ports 5432/6379/8080/6060 not reachable from the internet
 - [ ] Open-relay test returns 550; 587/143/110 refuse login before STARTTLS

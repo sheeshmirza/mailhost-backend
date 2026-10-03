@@ -392,13 +392,6 @@ func isPermanent(err error) bool {
 }
 
 func (w *Worker) send(ctx context.Context, from, rcpt string, raw []byte) error {
-	if w.cfg.RelayHost != "" {
-		host, port, err := net.SplitHostPort(w.cfg.RelayHost)
-		if err != nil {
-			return fmt.Errorf("invalid RELAY_HOST: %w", err)
-		}
-		return w.deliverTo(ctx, host, port, from, rcpt, raw, true)
-	}
 	at := strings.LastIndexByte(rcpt, '@')
 	if at < 0 {
 		return permanentError{"invalid recipient address"}
@@ -413,7 +406,7 @@ func (w *Worker) send(ctx context.Context, from, rcpt string, raw []byte) error 
 		port = "25"
 	}
 	for _, h := range hosts {
-		err := w.deliverTo(ctx, h, port, from, rcpt, raw, false)
+		err := w.deliverTo(ctx, h, port, from, rcpt, raw)
 		if err == nil || isPermanent(err) {
 			return err
 		}
@@ -451,7 +444,7 @@ func (w *Worker) mxHosts(ctx context.Context, domain string) ([]string, error) {
 }
 
 // deliverTo reuses a pooled connection when possible, falling back to a fresh one if it went stale.
-func (w *Worker) deliverTo(ctx context.Context, host, port, from, rcpt string, raw []byte, relay bool) error {
+func (w *Worker) deliverTo(ctx context.Context, host, port, from, rcpt string, raw []byte) error {
 	if w.cfg.DestRateLimitRPS > 0 {
 		if err := w.hostLimiter(host).Wait(ctx); err != nil {
 			return err
@@ -472,7 +465,7 @@ func (w *Worker) deliverTo(ctx context.Context, host, port, from, rcpt string, r
 		}
 		pc.close()
 	}
-	pc, err := w.dial(ctx, host, port, relay)
+	pc, err := w.dial(ctx, host, port)
 	if err != nil {
 		return err
 	}

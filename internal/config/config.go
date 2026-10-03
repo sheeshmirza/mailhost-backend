@@ -37,9 +37,6 @@ type Config struct {
 	RateLimitBurst        int
 	AccessLogSample       float64 // fraction of successful requests written to the access log
 	IdempotencyTTL        time.Duration
-	RelayHost             string // optional smarthost host:port; bypasses direct MX delivery
-	RelayUsername         string
-	RelayPassword         string
 	TLSCertFile           string
 	TLSKeyFile            string
 	MaxConnsPerHost       int     // concurrent outbound SMTP connections per MX host, per instance
@@ -168,9 +165,6 @@ func Load() (*Config, error) {
 		RateLimitBurst:        envInt("RATE_LIMIT_BURST", 0),
 		AccessLogSample:       envFloat("ACCESS_LOG_SAMPLE", 0.01),
 		IdempotencyTTL:        envDuration("IDEMPOTENCY_TTL", 24*time.Hour),
-		RelayHost:             os.Getenv("RELAY_HOST"),
-		RelayUsername:         os.Getenv("RELAY_USERNAME"),
-		RelayPassword:         os.Getenv("RELAY_PASSWORD"),
 		TLSCertFile:           env("TLS_CERT_FILE", os.Getenv("SMTP_TLS_CERT")),
 		TLSKeyFile:            env("TLS_KEY_FILE", os.Getenv("SMTP_TLS_KEY")),
 		MaxConnsPerHost:       envInt("MAX_CONNS_PER_HOST", 0),
@@ -239,7 +233,7 @@ func Load() (*Config, error) {
 	}
 	if c.AuthEmailSMTPAddr != "" {
 		if _, _, err := net.SplitHostPort(c.AuthEmailSMTPAddr); err != nil {
-			return nil, errors.New("AUTH_EMAIL_SMTP_ADDR must be a host:port address")
+			c.AuthEmailSMTPAddr = net.JoinHostPort(strings.TrimSpace(c.AuthEmailSMTPAddr), "587")
 		}
 		if _, err := mail.ParseAddress(c.AuthEmailFrom); err != nil {
 			return nil, errors.New("AUTH_EMAIL_FROM must be a valid email address")
@@ -252,9 +246,6 @@ func Load() (*Config, error) {
 	c.MasterKey = key
 	if (c.TLSCertFile == "") != (c.TLSKeyFile == "") {
 		return nil, errors.New("SMTP_TLS_CERT and SMTP_TLS_KEY must be set together")
-	}
-	if (c.RelayUsername == "") != (c.RelayPassword == "") {
-		return nil, errors.New("RELAY_USERNAME and RELAY_PASSWORD must be set together")
 	}
 	if c.DBMaxConns < 1 || c.Workers < 1 || c.MaxAttempts < 1 || c.MaxMessageBytes < 1 || c.MaxConnsPerHost < 0 || c.PollInterval <= 0 || c.IdempotencyTTL <= 0 || c.RetentionMonths < 0 {
 		return nil, errors.New("DB_MAX_CONNS, WORKERS, MAX_ATTEMPTS, MAX_MESSAGE_BYTES, POLL_INTERVAL and IDEMPOTENCY_TTL must be positive; MAX_CONNS_PER_HOST and EVENT_RETENTION_MONTHS must not be negative")

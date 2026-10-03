@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"golang.org/x/crypto/bcrypt"
 
+	"mailhost/internal/mailer"
 	"mailhost/internal/validator"
 )
 
@@ -45,7 +46,7 @@ type userSessionView struct {
 	IsCurrent  bool       `json:"is_current"`
 }
 
-// sendAuthEmail delivers authentication messages only through explicitly configured relay settings.
+// sendAuthEmail delivers account verification and password reset messages via AUTH_EMAIL_SMTP_ADDR.
 func (s *Server) sendAuthEmail(toEmail, subject, htmlBody, textBody string) {
 	if s.cfg == nil || s.cfg.AuthEmailSMTPAddr == "" || s.cfg.AuthEmailFrom == "" {
 		return
@@ -61,32 +62,50 @@ func (s *Server) sendAuthEmail(toEmail, subject, htmlBody, textBody string) {
 }
 
 func (s *Server) deliverAuthEmail(toEmail, subject, htmlBody, textBody string) error {
-	host, _, err := net.SplitHostPort(s.cfg.AuthEmailSMTPAddr)
+	host, port, err := net.SplitHostPort(s.cfg.AuthEmailSMTPAddr)
 	if err != nil {
-		return err
+		host = strings.TrimSpace(s.cfg.AuthEmailSMTPAddr)
+		port = "587"
 	}
-	conn, err := net.DialTimeout("tcp", s.cfg.AuthEmailSMTPAddr, 10*time.Second)
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, port), 10*time.Second)
 	if err != nil {
 		return err
 	}
 	_ = conn.SetDeadline(time.Now().Add(time.Minute))
-	client, err := smtp.NewClient(conn, host)
-	if err != nil {
-		_ = conn.Close()
-		return err
+
+	var client *smtp.Client
+	if port == "465" {
+		tlsConfig := &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12}
+		tlsConn := tls.Client(conn, tlsConfig)
+		if err := tlsConn.Handshake(); err != nil {
+			_ = conn.Close()
+			return fmt.Errorf("tls handshake %s:465: %w", host, err)
+		}
+		client, err = smtp.NewClient(tlsConn, host)
+		if err != nil {
+			_ = tlsConn.Close()
+			return err
+		}
+	} else {
+		client, err = smtp.NewClient(conn, host)
+		if err != nil {
+			_ = conn.Close()
+			return err
+		}
 	}
 	defer client.Close()
 	if err := client.Hello(s.cfg.Hostname); err != nil {
 		return err
 	}
-	if ok, _ := client.Extension("STARTTLS"); ok {
-		if err := client.StartTLS(&tls.Config{ServerName: host, MinVersion: tls.VersionTLS12}); err != nil {
-			return err
+	if port != "465" {
+		if ok, _ := client.Extension("STARTTLS"); ok {
+			if err := client.StartTLS(&tls.Config{ServerName: host, MinVersion: tls.VersionTLS12}); err != nil {
+				return err
+			}
 		}
 	}
 	if s.cfg.AuthEmailSMTPUsername != "" {
-		// net/smtp refuses PLAIN auth over an unencrypted connection to a non-local host.
-		if err := client.Auth(smtp.PlainAuth("", s.cfg.AuthEmailSMTPUsername, s.cfg.AuthEmailSMTPPassword, host)); err != nil {
+		if err := mailer.AuthenticateClient(client, host, s.cfg.AuthEmailSMTPUsername, s.cfg.AuthEmailSMTPPassword); err != nil {
 			return err
 		}
 	}
