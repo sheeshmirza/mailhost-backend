@@ -80,7 +80,7 @@ func (s *Server) signingKeys(ctx context.Context, account string, froms []string
 	for _, f := range froms {
 		a, err := mail.ParseAddress(f)
 		if err != nil {
-			continue
+			return nil, invalid("invalid sender address %q: %v", f, err)
 		}
 		if d := domainOf(a.Address); !seen[d] {
 			seen[d] = true
@@ -102,18 +102,23 @@ func (s *Server) signingKeys(ctx context.Context, account string, froms []string
 	}
 	if len(missing) > 0 {
 		rows, err := s.db.Query(ctx,
-			`SELECT id, name, dkim_selector, dkim_private_key, open_tracking, click_tracking FROM domains WHERE account_id = $1 AND status = 'verified' AND name = ANY($2)`,
+			`SELECT id, name, status, dkim_selector, dkim_private_key, open_tracking, click_tracking FROM domains WHERE account_id = $1 AND name = ANY($2)`,
 			account, missing)
 		if err != nil {
 			return nil, err
 		}
 		defer rows.Close()
+		foundStatus := map[string]string{}
 		for rows.Next() {
-			var id string
+			var id, status string
 			var enc []byte
 			k := &signingKey{}
-			if err := rows.Scan(&id, &k.name, &k.selector, &enc, &k.openTracking, &k.clickTracking); err != nil {
+			if err := rows.Scan(&id, &k.name, &status, &k.selector, &enc, &k.openTracking, &k.clickTracking); err != nil {
 				return nil, err
+			}
+			foundStatus[k.name] = status
+			if status != "verified" {
+				continue
 			}
 			k.domainID = uuid.MustParse(id)
 			if k.signer, err = s.signer(id, enc); err != nil {
@@ -124,6 +129,20 @@ func (s *Server) signingKeys(ctx context.Context, account string, froms []string
 		}
 		if err := rows.Err(); err != nil {
 			return nil, err
+		}
+		for _, name := range missing {
+			st, found := foundStatus[name]
+			if !found {
+				return nil, invalid("from domain %q is not a registered domain on this account", name)
+			}
+			if st != "verified" {
+				return nil, invalid("from domain %q is registered but not verified on this account", name)
+			}
+		}
+	}
+	for _, name := range names {
+		if keys[name] == nil {
+			return nil, invalid("from domain %q is not a verified domain on this account", name)
 		}
 	}
 	if restrictedDom, ok := ctx.Value(domainKey{}).(string); ok && restrictedDom != "" {

@@ -13,7 +13,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"mailhost/internal/mailer"
 	"mailhost/internal/queue"
+	"mailhost/internal/validator"
 )
 
 type stepConfig struct {
@@ -75,6 +77,18 @@ func validateAutomationSteps(steps []automationStep, path string, topLevel bool)
 	return ""
 }
 
+func collectAutomationFroms(steps []automationStep) []string {
+	var froms []string
+	for _, st := range steps {
+		if (st.Type == "send_email" || st.Type == "email") && strings.TrimSpace(st.Config.From) != "" {
+			froms = append(froms, strings.TrimSpace(st.Config.From))
+		}
+		froms = append(froms, collectAutomationFroms(st.ThenSteps)...)
+		froms = append(froms, collectAutomationFroms(st.ElseSteps)...)
+	}
+	return froms
+}
+
 func (s *Server) createAutomation(w http.ResponseWriter, r *http.Request) {
 	if !requireDeveloperOrAdmin(w, r) {
 		return
@@ -122,6 +136,29 @@ func (s *Server) createAutomation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	acct := accountID(r)
+	for _, f := range collectAutomationFroms(req.Steps) {
+		addr, err := mailer.ParseAddress(f)
+		if err != nil || !validator.IsValidEmail(addr.Address) {
+			writeError(w, http.StatusUnprocessableEntity, "invalid sender email address in automation steps: "+f)
+			return
+		}
+		dom := domainOf(addr.Address)
+		var domStatus string
+		err = s.db.QueryRow(r.Context(), `SELECT status FROM domains WHERE account_id = $1 AND lower(name) = $2`, acct, strings.ToLower(dom)).Scan(&domStatus)
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusUnprocessableEntity, "from domain \""+dom+"\" is not a registered domain on this account")
+			return
+		}
+		if err != nil {
+			s.internal(w, err)
+			return
+		}
+		if domStatus != "verified" {
+			writeError(w, http.StatusUnprocessableEntity, "from domain \""+dom+"\" is registered but not verified on this account")
+			return
+		}
+	}
 	trigJSON, _ := json.Marshal(req.Trigger)
 	if len(trigJSON) > 1<<20 {
 		writeError(w, http.StatusUnprocessableEntity, "trigger cannot exceed 1 MiB")
@@ -136,7 +173,6 @@ func (s *Server) createAutomation(w http.ResponseWriter, r *http.Request) {
 		stepsJSON = []byte("[]")
 	}
 
-	acct := accountID(r)
 	var id uuid.UUID
 	var createdAt, updatedAt time.Time
 
@@ -337,6 +373,30 @@ func (s *Server) updateAutomation(w http.ResponseWriter, r *http.Request) {
 	}
 
 	acct := accountID(r)
+	if req.Steps != nil {
+		for _, f := range collectAutomationFroms(req.Steps) {
+			addr, err := mailer.ParseAddress(f)
+			if err != nil || !validator.IsValidEmail(addr.Address) {
+				writeError(w, http.StatusUnprocessableEntity, "invalid sender email address in automation steps: "+f)
+				return
+			}
+			dom := domainOf(addr.Address)
+			var domStatus string
+			err = s.db.QueryRow(r.Context(), `SELECT status FROM domains WHERE account_id = $1 AND lower(name) = $2`, acct, strings.ToLower(dom)).Scan(&domStatus)
+			if errors.Is(err, pgx.ErrNoRows) {
+				writeError(w, http.StatusUnprocessableEntity, "from domain \""+dom+"\" is not a registered domain on this account")
+				return
+			}
+			if err != nil {
+				s.internal(w, err)
+				return
+			}
+			if domStatus != "verified" {
+				writeError(w, http.StatusUnprocessableEntity, "from domain \""+dom+"\" is registered but not verified on this account")
+				return
+			}
+		}
+	}
 	tag, err := s.db.Exec(r.Context(), `
 UPDATE automations
 SET name = COALESCE(NULLIF($3, ''), name),

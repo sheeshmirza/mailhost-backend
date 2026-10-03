@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"mailhost/internal/mailer"
 	"mailhost/internal/queue"
 	"mailhost/internal/validator"
 )
@@ -88,8 +89,24 @@ func (s *Server) createBroadcast(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	from := strings.TrimSpace(req.From)
-	if !validator.IsValidEmail(from) {
+	fromAddr, err := mailer.ParseAddress(from)
+	if err != nil || !validator.IsValidEmail(fromAddr.Address) {
 		writeError(w, http.StatusUnprocessableEntity, "valid 'from' email address is required")
+		return
+	}
+	fromDom := domainOf(fromAddr.Address)
+	var domStatus string
+	err = s.db.QueryRow(r.Context(), `SELECT status FROM domains WHERE account_id = $1 AND lower(name) = $2`, accountID(r), strings.ToLower(fromDom)).Scan(&domStatus)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusUnprocessableEntity, "from domain \""+fromDom+"\" is not a registered domain on this account")
+		return
+	}
+	if err != nil {
+		s.internal(w, err)
+		return
+	}
+	if domStatus != "verified" {
+		writeError(w, http.StatusUnprocessableEntity, "from domain \""+fromDom+"\" is registered but not verified on this account")
 		return
 	}
 	if strings.TrimSpace(req.Subject) == "" || len(req.Subject) > 998 || strings.ContainsAny(req.Subject, "\r\n") {
@@ -166,7 +183,7 @@ func (s *Server) createBroadcast(w http.ResponseWriter, r *http.Request) {
 	var id uuid.UUID
 	var createdAt, updatedAt time.Time
 
-	err := s.db.QueryRow(r.Context(), `
+	err = s.db.QueryRow(r.Context(), `
 INSERT INTO broadcasts (account_id, segment_id, audience_id, topic_id, name, from_addr, subject, reply_to, preview_text, html, text, status, scheduled_at, updated_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'draft', $12, now())
 RETURNING id, created_at, updated_at`,
@@ -365,9 +382,29 @@ func (s *Server) updateBroadcast(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "name must be at most 100 characters")
 		return
 	}
-	if req.From != "" && !validator.IsValidEmail(req.From) {
-		writeError(w, http.StatusUnprocessableEntity, "valid 'from' email address is required")
-		return
+	acct := accountID(r)
+	if req.From != "" {
+		from := strings.TrimSpace(req.From)
+		fromAddr, err := mailer.ParseAddress(from)
+		if err != nil || !validator.IsValidEmail(fromAddr.Address) {
+			writeError(w, http.StatusUnprocessableEntity, "valid 'from' email address is required")
+			return
+		}
+		fromDom := domainOf(fromAddr.Address)
+		var domStatus string
+		err = s.db.QueryRow(r.Context(), `SELECT status FROM domains WHERE account_id = $1 AND lower(name) = $2`, acct, strings.ToLower(fromDom)).Scan(&domStatus)
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusUnprocessableEntity, "from domain \""+fromDom+"\" is not a registered domain on this account")
+			return
+		}
+		if err != nil {
+			s.internal(w, err)
+			return
+		}
+		if domStatus != "verified" {
+			writeError(w, http.StatusUnprocessableEntity, "from domain \""+fromDom+"\" is registered but not verified on this account")
+			return
+		}
 	}
 	if req.Subject != "" && (len(req.Subject) > 998 || strings.ContainsAny(req.Subject, "\r\n")) {
 		writeError(w, http.StatusUnprocessableEntity, "subject must be under 998 characters and contain no newlines")
@@ -381,7 +418,6 @@ func (s *Server) updateBroadcast(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	acct := accountID(r)
 
 	tag, err := s.db.Exec(r.Context(), `
 UPDATE broadcasts
