@@ -198,3 +198,30 @@ func TestIsRoleBasedEmail(t *testing.T) {
 		}
 	}
 }
+
+func TestValidatePassword(t *testing.T) {
+	tests := []struct {
+		password string
+		valid    bool
+	}{
+		{"Password123!", true},
+		{"correct-horse-battery-staple", true},
+		{"SecretPass#2026", true},
+		{"Short1!", false},
+		{string(make([]byte, 80)), false},
+		{"password", false},
+		{"password123", false},
+		{"12345678", false},
+		{"aaaaaaaa", false},
+		{"11111111", false},
+		{"alllowercase", false},
+		{"ALLUPPERCASE", false},
+	}
+
+	for _, tt := range tests {
+		err := ValidatePassword(tt.password)
+		if (err == nil) != tt.valid {
+			t.Errorf("ValidatePassword(%q) err = %v, want valid = %v", tt.password, err, tt.valid)
+		}
+	}
+}

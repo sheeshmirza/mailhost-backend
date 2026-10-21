@@ -20,6 +20,7 @@ import (
 
 	"mailhost/internal/metrics"
 	"mailhost/internal/queue"
+	"mailhost/internal/validator"
 )
 
 // 1x1 transparent GIF bytes
@@ -181,8 +182,13 @@ func (s *Server) trackClick(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if validator.ContainsCRLF(targetURL) {
+		writeError(w, http.StatusBadRequest, "invalid target URL")
+		return
+	}
+
 	parsed, err := url.Parse(targetURL)
-	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil {
 		writeError(w, http.StatusBadRequest, "invalid target URL")
 		return
 	}

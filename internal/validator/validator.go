@@ -2,9 +2,11 @@
 package validator
 
 import (
+	"errors"
 	"net/mail"
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 var (
@@ -125,5 +127,80 @@ func IsRoleBasedEmail(email string) bool {
 		local = local[:idx]
 	}
 	return rolePrefixes[local]
+}
+
+var commonWeakPasswords = map[string]bool{
+	"password": true, "password1": true, "password123": true, "12345678": true,
+	"123456789": true, "1234567890": true, "qwertyui": true, "qwertyuiop": true,
+	"admin123": true, "admin1234": true, "welcome1": true, "welcome123": true,
+	"letmein123": true, "passphrase": true, "iloveyou": true, "monkey123": true,
+	"dragon123": true, "mailhost": true, "mailhost123": true,
+}
+
+// ValidatePassword enforces enterprise password security policies:
+// - Length between 8 and 72 characters (preventing bcrypt truncation and DoS)
+// - Rejection of common dictionary passwords
+// - Diverse character classes for passwords under 16 characters
+// - Rejection of single-character repeated sequences
+func ValidatePassword(password string) error {
+	if len(password) < 8 {
+		return errors.New("password must be at least 8 characters long")
+	}
+	if len(password) > 72 {
+		return errors.New("password must not exceed 72 characters")
+	}
+
+	lower := strings.ToLower(strings.TrimSpace(password))
+	if commonWeakPasswords[lower] {
+		return errors.New("password is too common and easily guessable")
+	}
+
+	allSame := true
+	firstRune := rune(0)
+	for i, r := range password {
+		if i == 0 {
+			firstRune = r
+		} else if r != firstRune {
+			allSame = false
+			break
+		}
+	}
+	if allSame {
+		return errors.New("password cannot consist of a single repeated character")
+	}
+
+	if len(password) < 16 {
+		var hasUpper, hasLower, hasDigit, hasSpecial bool
+		for _, r := range password {
+			switch {
+			case unicode.IsUpper(r):
+				hasUpper = true
+			case unicode.IsLower(r):
+				hasLower = true
+			case unicode.IsDigit(r):
+				hasDigit = true
+			case unicode.IsPunct(r) || unicode.IsSymbol(r) || r == ' ':
+				hasSpecial = true
+			}
+		}
+		classes := 0
+		if hasUpper {
+			classes++
+		}
+		if hasLower {
+			classes++
+		}
+		if hasDigit {
+			classes++
+		}
+		if hasSpecial {
+			classes++
+		}
+		if classes < 2 {
+			return errors.New("password must contain at least two of: uppercase letters, lowercase letters, numbers, symbols")
+		}
+	}
+
+	return nil
 }
 

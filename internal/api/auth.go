@@ -21,6 +21,9 @@ import (
 	"mailhost/internal/validator"
 )
 
+// dummyBcryptHash is a precomputed bcrypt hash (cost 10) used to prevent user enumeration timing attacks.
+var dummyBcryptHash = []byte("$2a$10$wT0sZ/g1F5t15s1iKjRj6eGZ8Q/XjZ2vB7c8P0qW1yU2i3o4p5a6.")
+
 type userView struct {
 	ID            string    `json:"id"`
 	Email         string    `json:"email"`
@@ -159,8 +162,8 @@ func (s *Server) registerUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(req.Password) < 8 || len(req.Password) > 72 {
-		writeError(w, http.StatusUnprocessableEntity, "password must be between 8 and 72 characters")
+	if err := validator.ValidatePassword(req.Password); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
 
@@ -367,6 +370,20 @@ UPDATE organization_members SET user_id = $1, updated_at = now() WHERE lower(ema
 
 // resendVerification sends a new verification email to the user.
 func (s *Server) resendVerification(w http.ResponseWriter, r *http.Request) {
+	ip := clientIP(r)
+	if blocked, _ := s.checkAuthRate(ip); blocked {
+		w.Header().Set("Retry-After", "300")
+		writeError(w, http.StatusTooManyRequests, "too many verification requests; please try again later")
+		return
+	}
+	if s.redis != nil {
+		if allowed, err := s.redis.AllowRate(r.Context(), "ratelimit:resendver:"+ip, 5, time.Minute); err == nil && !allowed {
+			w.Header().Set("Retry-After", "60")
+			writeError(w, http.StatusTooManyRequests, "too many verification email requests; please wait before retrying")
+			return
+		}
+	}
+
 	var email string
 	var req struct {
 		Email string `json:"email"`
@@ -434,6 +451,20 @@ UPDATE users SET verification_token = $1, verification_token_expires_at = $2, up
 
 // forgotPassword initiates a password reset request and sends a reset token via email.
 func (s *Server) forgotPassword(w http.ResponseWriter, r *http.Request) {
+	ip := clientIP(r)
+	if blocked, _ := s.checkAuthRate(ip); blocked {
+		w.Header().Set("Retry-After", "300")
+		writeError(w, http.StatusTooManyRequests, "too many password reset requests; please try again later")
+		return
+	}
+	if s.redis != nil {
+		if allowed, err := s.redis.AllowRate(r.Context(), "ratelimit:pwreset:"+ip, 5, time.Minute); err == nil && !allowed {
+			w.Header().Set("Retry-After", "60")
+			writeError(w, http.StatusTooManyRequests, "too many password reset requests; please wait before retrying")
+			return
+		}
+	}
+
 	var req struct {
 		Email string `json:"email"`
 	}
@@ -500,8 +531,8 @@ func (s *Server) resetPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(req.NewPassword) < 8 || len(req.NewPassword) > 72 {
-		writeError(w, http.StatusUnprocessableEntity, "new_password must be between 8 and 72 characters")
+	if err := validator.ValidatePassword(req.NewPassword); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
 
@@ -684,7 +715,7 @@ SELECT id, password_hash, name, avatar_url, email_verified, created_at
 FROM users WHERE lower(email) = $1`, email).Scan(&userID, &pwdHash, &name, &avatarURL, &verified, &userCreated)
 	if errors.Is(err, pgx.ErrNoRows) {
 		s.recordAuthFailure(ip)
-		time.Sleep(200 * time.Millisecond)
+		_ = bcrypt.CompareHashAndPassword(dummyBcryptHash, []byte(req.Password))
 		writeError(w, http.StatusUnauthorized, "invalid email or password")
 		return
 	}
@@ -695,7 +726,6 @@ FROM users WHERE lower(email) = $1`, email).Scan(&userID, &pwdHash, &name, &avat
 
 	if err := bcrypt.CompareHashAndPassword([]byte(pwdHash), []byte(req.Password)); err != nil {
 		s.recordAuthFailure(ip)
-		time.Sleep(200 * time.Millisecond)
 		writeError(w, http.StatusUnauthorized, "invalid email or password")
 		return
 	}
@@ -934,8 +964,8 @@ func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(req.NewPassword) < 8 || len(req.NewPassword) > 72 {
-		writeError(w, http.StatusUnprocessableEntity, "new_password must be between 8 and 72 characters")
+	if err := validator.ValidatePassword(req.NewPassword); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
 
