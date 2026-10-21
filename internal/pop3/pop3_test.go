@@ -161,12 +161,7 @@ func TestPOP3TransactionCommands(t *testing.T) {
 	if !strings.HasPrefix(line, "+OK 2 messages (100 octets)") {
 		t.Errorf("unexpected LIST header: %s", line)
 	}
-	for {
-		l, _ := clientTp.ReadLine()
-		if strings.TrimSpace(l) == "." {
-			break
-		}
-	}
+	_, _ = readDotResponse(clientTp)
 
 	// LIST 1 (valid) and LIST 99 (invalid)
 	_ = clientTp.PrintfLine("LIST 1")
@@ -186,12 +181,7 @@ func TestPOP3TransactionCommands(t *testing.T) {
 	if !strings.HasPrefix(line, "+OK") {
 		t.Errorf("unexpected UIDL header: %s", line)
 	}
-	for {
-		l, _ := clientTp.ReadLine()
-		if strings.TrimSpace(l) == "." {
-			break
-		}
-	}
+	_, _ = readDotResponse(clientTp)
 
 	// UIDL 1 (valid) and UIDL 99 (invalid)
 	_ = clientTp.PrintfLine("UIDL 1")
@@ -211,12 +201,7 @@ func TestPOP3TransactionCommands(t *testing.T) {
 	if !strings.HasPrefix(line, "+OK") {
 		t.Errorf("unexpected RETR 1 header: %s", line)
 	}
-	for {
-		l, _ := clientTp.ReadLine()
-		if strings.TrimSpace(l) == "." {
-			break
-		}
-	}
+	_, _ = readDotResponse(clientTp)
 
 	// RETR missing and invalid
 	_ = clientTp.PrintfLine("RETR")
@@ -236,12 +221,7 @@ func TestPOP3TransactionCommands(t *testing.T) {
 	if !strings.HasPrefix(line, "+OK") {
 		t.Errorf("unexpected TOP header: %s", line)
 	}
-	for {
-		l, _ := clientTp.ReadLine()
-		if strings.TrimSpace(l) == "." {
-			break
-		}
-	}
+	_, _ = readDotResponse(clientTp)
 
 	// TOP invalid arguments
 	_ = clientTp.PrintfLine("TOP 1")

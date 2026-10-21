@@ -256,39 +256,24 @@ func (sess *session) handleCommand(cmd string, args []string) (quit bool) {
 		_ = sess.tp.PrintfLine("+OK Mailbox open, %d messages (%d octets)", len(sess.msgs), totalSize)
 
 	case "STAT":
-		if sess.state != stateTransaction {
-			_ = sess.tp.PrintfLine("-ERR command only valid in TRANSACTION state")
+		if !sess.requireTransaction() {
 			return false
 		}
-		count, size := 0, 0
-		for _, m := range sess.msgs {
-			if !m.deleted {
-				count++
-				size += m.msg.Size
-			}
-		}
+		count, size := sess.activeStats()
 		_ = sess.tp.PrintfLine("+OK %d %d", count, size)
 
 	case "LIST":
-		if sess.state != stateTransaction {
-			_ = sess.tp.PrintfLine("-ERR command only valid in TRANSACTION state")
+		if !sess.requireTransaction() {
 			return false
 		}
 		if len(args) > 0 {
-			num, err := strconv.Atoi(args[0])
-			if err != nil || num < 1 || num > len(sess.msgs) || sess.msgs[num-1].deleted {
-				_ = sess.tp.PrintfLine("-ERR no such message")
+			num, m, ok := sess.getActiveMsg(args[0])
+			if !ok {
 				return false
 			}
-			_ = sess.tp.PrintfLine("+OK %d %d", num, sess.msgs[num-1].msg.Size)
+			_ = sess.tp.PrintfLine("+OK %d %d", num, m.msg.Size)
 		} else {
-			count, size := 0, 0
-			for _, m := range sess.msgs {
-				if !m.deleted {
-					count++
-					size += m.msg.Size
-				}
-			}
+			count, size := sess.activeStats()
 			_ = sess.tp.PrintfLine("+OK %d messages (%d octets)", count, size)
 			for i, m := range sess.msgs {
 				if !m.deleted {
@@ -299,17 +284,15 @@ func (sess *session) handleCommand(cmd string, args []string) (quit bool) {
 		}
 
 	case "UIDL":
-		if sess.state != stateTransaction {
-			_ = sess.tp.PrintfLine("-ERR command only valid in TRANSACTION state")
+		if !sess.requireTransaction() {
 			return false
 		}
 		if len(args) > 0 {
-			num, err := strconv.Atoi(args[0])
-			if err != nil || num < 1 || num > len(sess.msgs) || sess.msgs[num-1].deleted {
-				_ = sess.tp.PrintfLine("-ERR no such message")
+			num, m, ok := sess.getActiveMsg(args[0])
+			if !ok {
 				return false
 			}
-			_ = sess.tp.PrintfLine("+OK %d %d", num, sess.msgs[num-1].msg.UID)
+			_ = sess.tp.PrintfLine("+OK %d %d", num, m.msg.UID)
 		} else {
 			_ = sess.tp.PrintfLine("+OK unique-id listing follows")
 			for i, m := range sess.msgs {
@@ -321,65 +304,60 @@ func (sess *session) handleCommand(cmd string, args []string) (quit bool) {
 		}
 
 	case "RETR":
-		if sess.state != stateTransaction {
-			_ = sess.tp.PrintfLine("-ERR command only valid in TRANSACTION state")
+		if !sess.requireTransaction() {
 			return false
 		}
 		if len(args) == 0 {
 			_ = sess.tp.PrintfLine("-ERR message number required")
 			return false
 		}
-		num, err := strconv.Atoi(args[0])
-		if err != nil || num < 1 || num > len(sess.msgs) || sess.msgs[num-1].deleted {
-			_ = sess.tp.PrintfLine("-ERR no such message")
+		_, m, ok := sess.getActiveMsg(args[0])
+		if !ok {
 			return false
 		}
 
-		m := sess.msgs[num-1].msg
-		_ = sess.tp.PrintfLine("+OK %d octets", m.Size)
-		sess.sendDotStuffed(m.Raw)
+		_ = sess.tp.PrintfLine("+OK %d octets", m.msg.Size)
+		sess.sendDotStuffed(m.msg.Raw)
 
 	case "TOP":
-		if sess.state != stateTransaction {
-			_ = sess.tp.PrintfLine("-ERR command only valid in TRANSACTION state")
+		if !sess.requireTransaction() {
 			return false
 		}
 		if len(args) < 2 {
 			_ = sess.tp.PrintfLine("-ERR message number and line count required")
 			return false
 		}
-		num, err := strconv.Atoi(args[0])
+		_, m, ok := sess.getActiveMsg(args[0])
+		if !ok {
+			return false
+		}
 		lines, err2 := strconv.Atoi(args[1])
-		if err != nil || err2 != nil || num < 1 || num > len(sess.msgs) || sess.msgs[num-1].deleted {
+		if err2 != nil {
 			_ = sess.tp.PrintfLine("-ERR no such message")
 			return false
 		}
 
-		m := sess.msgs[num-1].msg
-		topBytes := extractTop(m.Raw, lines)
+		topBytes := extractTop(m.msg.Raw, lines)
 		_ = sess.tp.PrintfLine("+OK top of message follows")
 		sess.sendDotStuffed(topBytes)
 
 	case "DELE":
-		if sess.state != stateTransaction {
-			_ = sess.tp.PrintfLine("-ERR command only valid in TRANSACTION state")
+		if !sess.requireTransaction() {
 			return false
 		}
 		if len(args) == 0 {
 			_ = sess.tp.PrintfLine("-ERR message number required")
 			return false
 		}
-		num, err := strconv.Atoi(args[0])
-		if err != nil || num < 1 || num > len(sess.msgs) || sess.msgs[num-1].deleted {
-			_ = sess.tp.PrintfLine("-ERR no such message")
+		num, m, ok := sess.getActiveMsg(args[0])
+		if !ok {
 			return false
 		}
-		sess.msgs[num-1].deleted = true
+		m.deleted = true
 		_ = sess.tp.PrintfLine("+OK message %d marked for deletion", num)
 
 	case "RSET":
-		if sess.state != stateTransaction {
-			_ = sess.tp.PrintfLine("-ERR command only valid in TRANSACTION state")
+		if !sess.requireTransaction() {
 			return false
 		}
 		for i := range sess.msgs {
@@ -388,8 +366,7 @@ func (sess *session) handleCommand(cmd string, args []string) (quit bool) {
 		_ = sess.tp.PrintfLine("+OK maildrop reset")
 
 	case "NOOP":
-		if sess.state != stateTransaction {
-			_ = sess.tp.PrintfLine("-ERR command only valid in TRANSACTION state")
+		if !sess.requireTransaction() {
 			return false
 		}
 		_ = sess.tp.PrintfLine("+OK")
@@ -471,3 +448,32 @@ func (sess *session) expunge() {
 	_ = mailbox.UpdateFlags(ctx, sess.s.db, sess.mb.ID, toDelete, []string{"\\Deleted"}, mailbox.FlagOpAdd)
 	_, _ = mailbox.ExpungeDeleted(ctx, sess.s.db, sess.mb.ID, toDelete)
 }
+
+func (sess *session) requireTransaction() bool {
+	if sess.state != stateTransaction {
+		_ = sess.tp.PrintfLine("-ERR command only valid in TRANSACTION state")
+		return false
+	}
+	return true
+}
+
+func (sess *session) activeStats() (int, int) {
+	count, size := 0, 0
+	for _, m := range sess.msgs {
+		if !m.deleted {
+			count++
+			size += m.msg.Size
+		}
+	}
+	return count, size
+}
+
+func (sess *session) getActiveMsg(arg string) (int, *pop3Msg, bool) {
+	num, err := strconv.Atoi(arg)
+	if err != nil || num < 1 || num > len(sess.msgs) || sess.msgs[num-1].deleted {
+		_ = sess.tp.PrintfLine("-ERR no such message")
+		return 0, nil, false
+	}
+	return num, &sess.msgs[num-1], true
+}
+
