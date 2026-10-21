@@ -7,22 +7,6 @@ import (
 	"github.com/google/uuid"
 )
 
-type mockBroker struct {
-	published int
-}
-
-func (m *mockBroker) Publish(ctx context.Context, msg brokerDeliveryMsg) error {
-	m.published++
-	return nil
-}
-
-func (m *mockBroker) PublishBatch(ctx context.Context, msgs []brokerDeliveryMsg) error {
-	m.published += len(msgs)
-	return nil
-}
-
-type brokerDeliveryMsg = interface{}
-
 func TestBrokerRegistration(t *testing.T) {
 	orig := getBroker()
 	defer SetBroker(orig)
