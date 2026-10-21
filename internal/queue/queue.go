@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"mailhost/internal/broker"
+	"mailhost/internal/metrics"
 )
 
 const (
@@ -201,12 +202,14 @@ func enqueue(ctx context.Context, tx pgx.Tx, accountID uuid.UUID, emails []Email
 				deliveryRows = append(deliveryRows, []any{dlv, eid, acct, did, r, "failed", e.Priority, &msg, now, now, now})
 				eventRows = append(eventRows, []any{acct, did, eid, dlv, "failed", &msg, now})
 				deltas[failedKey]++
+				metrics.Default.RecordEmail("failed")
 				continue
 			}
 			deliveryRows = append(deliveryRows, []any{dlv, eid, acct, did, r, status, e.Priority, nil, nextAttempt, now, now})
 			eventRows = append(eventRows, []any{acct, did, eid, dlv, "sent", nil, now})
 			hooks = append(hooks, webhookEvent{accountID.String(), "email.sent", e.ID.String(), dlvID.String(), r, ""})
 			deltas[sentKey]++
+			metrics.Default.RecordEmail("sent")
 			if e.ScheduledAt == nil || !e.ScheduledAt.After(now) {
 				queuedMsgs = append(queuedMsgs, broker.DeliveryMessage{
 					DeliveryID: dlvID.String(),

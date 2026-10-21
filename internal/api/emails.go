@@ -405,7 +405,8 @@ func (s *Server) prepare(req *sendReq, atts []mailer.Attachment, keys map[string
 		for k, v := range req.Headers {
 			headers[k] = v
 		}
-		headers["List-Unsubscribe"] = "<https://" + s.cfg.Hostname + "/v1/unsubscribe/" + id.String() + ">"
+		baseURL := trackingBaseURL(s.cfg.Hostname)
+		headers["List-Unsubscribe"] = "<" + baseURL + "/v1/unsubscribe/" + id.String() + ">"
 		headers["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
 	}
 	raw, err := mailer.Build(&mailer.Message{

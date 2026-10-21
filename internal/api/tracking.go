@@ -18,6 +18,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"mailhost/internal/metrics"
 	"mailhost/internal/queue"
 )
 
@@ -135,6 +136,7 @@ func (s *Server) recordTrackingEvent(ctx context.Context, token uuid.UUID, event
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
+	metrics.Default.RecordEmail(eventType)
 	return recipients, nil
 }
 
@@ -186,7 +188,12 @@ func (s *Server) trackClick(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Verify HMAC signature to protect against open redirects; fail closed without a key.
-	if len(s.cfg.MasterKey) == 0 || sig == "" || !verifyTrackingSignature(s.cfg.MasterKey, dlvIDStr, targetURL, sig) {
+	validSig := verifyTrackingSignature(s.cfg.MasterKey, dlvIDStr, targetURL, sig)
+	if !validSig && (strings.Contains(targetURL, "&") || strings.Contains(targetURL, "%")) {
+		validSig = verifyTrackingSignature(s.cfg.MasterKey, dlvIDStr, html.EscapeString(targetURL), sig) ||
+			verifyTrackingSignature(s.cfg.MasterKey, dlvIDStr, html.UnescapeString(targetURL), sig)
+	}
+	if len(s.cfg.MasterKey) == 0 || sig == "" || !validSig {
 		writeError(w, http.StatusBadRequest, "invalid or missing tracking signature")
 		return
 	}
@@ -324,6 +331,20 @@ ON CONFLICT (account_id, address) DO NOTHING`, acctID, email)
 </html>`))
 }
 
+func trackingBaseURL(host string) string {
+	host = strings.TrimSpace(host)
+	if host == "" {
+		host = "localhost"
+	}
+	if strings.HasPrefix(host, "http://") || strings.HasPrefix(host, "https://") {
+		return strings.TrimRight(host, "/")
+	}
+	if strings.HasPrefix(host, "localhost") || strings.HasPrefix(host, "127.0.0.1") {
+		return "http://" + strings.TrimRight(host, "/")
+	}
+	return "https://" + strings.TrimRight(host, "/")
+}
+
 var hrefRegex = regexp.MustCompile(`(?i)<a\s+([^>]*?)href=["'](https?://[^"']+)["']([^>]*)>`)
 
 // InjectTracking modifies HTML content to inject open tracking pixels and rewrite links for click tracking.
@@ -333,6 +354,7 @@ func InjectTracking(htmlContent, host, deliveryID string, secret []byte, openTra
 	}
 
 	result := htmlContent
+	baseURL := trackingBaseURL(host)
 
 	// Rewrite links for click tracking
 	if clickTrack {
@@ -341,16 +363,16 @@ func InjectTracking(htmlContent, host, deliveryID string, secret []byte, openTra
 			if len(sub) < 4 {
 				return m
 			}
-			origURL := sub[2]
+			origURL := html.UnescapeString(sub[2])
 			if strings.Contains(origURL, "/v1/track/") || strings.Contains(origURL, "/v1/unsubscribe/") {
 				return m
 			}
 			var trackedURL string
 			if len(secret) > 0 {
 				sig := computeTrackingSignature(secret, deliveryID, origURL)
-				trackedURL = fmt.Sprintf("https://%s/v1/track/click/%s?url=%s&sig=%s", host, deliveryID, url.QueryEscape(origURL), sig)
+				trackedURL = fmt.Sprintf("%s/v1/track/click/%s?url=%s&sig=%s", baseURL, deliveryID, url.QueryEscape(origURL), sig)
 			} else {
-				trackedURL = fmt.Sprintf("https://%s/v1/track/click/%s?url=%s", host, deliveryID, url.QueryEscape(origURL))
+				trackedURL = fmt.Sprintf("%s/v1/track/click/%s?url=%s", baseURL, deliveryID, url.QueryEscape(origURL))
 			}
 			return fmt.Sprintf(`<a %shref="%s"%s>`, sub[1], trackedURL, sub[3])
 		})
@@ -358,7 +380,7 @@ func InjectTracking(htmlContent, host, deliveryID string, secret []byte, openTra
 
 	// Inject 1x1 open tracking pixel
 	if openTrack {
-		pixel := fmt.Sprintf(`<img src="https://%s/v1/track/open/%s" width="1" height="1" alt="" style="display:none;width:1px;height:1px;border:0;" />`, host, deliveryID)
+		pixel := fmt.Sprintf(`<img src="%s/v1/track/open/%s" width="1" height="1" alt="" style="display:none;width:1px;height:1px;border:0;" />`, baseURL, deliveryID)
 		if idx := strings.LastIndex(strings.ToLower(result), "</body>"); idx >= 0 {
 			result = result[:idx] + pixel + result[idx:]
 		} else {

@@ -102,6 +102,20 @@ WITH counts AS (
 	AND type IN ('sent', 'delivered', 'bounced', 'failed', 'opened', 'clicked')
     GROUP BY 1, 2
     UNION ALL
+    SELECT date_trunc($4::text, e.created_at AT TIME ZONE 'UTC') AS bucket, e.type, count(*)::bigint AS count
+    FROM events e
+    WHERE e.account_id = $1 AND e.created_at >= $2 AND e.created_at < $3
+      AND ($5::uuid IS NULL OR e.domain_id = $5::uuid)
+	AND e.type IN ('sent', 'delivered', 'bounced', 'failed', 'opened', 'clicked')
+	AND NOT EXISTS (
+	    SELECT 1 FROM event_rollups r
+	    WHERE r.account_id = e.account_id
+	      AND r.domain_id = e.domain_id
+	      AND r.bucket = date_trunc('hour', e.created_at)
+	      AND r.type = e.type
+	)
+    GROUP BY 1, 2
+    UNION ALL
     SELECT date_trunc($4::text, created_at AT TIME ZONE 'UTC') AS bucket, type, count(*)::bigint AS count
     FROM events
     WHERE account_id = $1 AND created_at >= $6 AND created_at < $7

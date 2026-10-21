@@ -544,7 +544,26 @@ VALUES ($1, $2, $3, $4, $5, 'draft', now()) RETURNING id`, acct, name, from, sub
 		return string(b), nil
 
 	case "get_analytics":
-		rows, err := s.rdb.Query(ctx, `SELECT type, sum(count) FROM event_rollups WHERE account_id = $1 GROUP BY type`, acct)
+		rows, err := s.rdb.Query(ctx, `
+WITH combined AS (
+    SELECT type, sum(count)::bigint AS count
+    FROM event_rollups
+    WHERE account_id = $1
+    GROUP BY type
+    UNION ALL
+    SELECT e.type, count(*)::bigint AS count
+    FROM events e
+    WHERE e.account_id = $1
+      AND NOT EXISTS (
+          SELECT 1 FROM event_rollups r
+          WHERE r.account_id = e.account_id
+            AND r.domain_id = e.domain_id
+            AND r.bucket = date_trunc('hour', e.created_at)
+            AND r.type = e.type
+      )
+    GROUP BY e.type
+)
+SELECT type, sum(count)::bigint FROM combined GROUP BY type`, acct)
 		if err != nil {
 			return "", err
 		}
