@@ -70,5 +70,9 @@ func (s *Server) listAuditLogs(w http.ResponseWriter, r *http.Request) {
 		s.internal(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": list})
+	resp := map[string]any{"data": list}
+	if len(list) == limit {
+		resp["next_before"] = list[len(list)-1].CreatedAt
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
