@@ -1,8 +1,17 @@
 package webhook
 
 import (
+	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestIsPublicIP(t *testing.T) {
@@ -73,5 +82,147 @@ func TestIsPublicIP(t *testing.T) {
 			t.Errorf("IsPublicIP(%s) = %v, want %v", tt.ip, got, tt.public)
 		}
 	}
+	if IsPublicIP(nil) {
+		t.Error("expected IsPublicIP(nil) to be false")
+	}
 }
+
+func TestDenyInternal(t *testing.T) {
+	// Loopback address should be denied
+	if err := DenyInternal("tcp", "127.0.0.1:8080", nil); err == nil {
+		t.Error("expected error for loopback 127.0.0.1")
+	}
+	// Public IP should pass
+	if err := DenyInternal("tcp", "8.8.8.8:443", nil); err != nil {
+		t.Errorf("expected public IP to pass, got: %v", err)
+	}
+	// Invalid host:port
+	if err := DenyInternal("tcp", "invalid-no-port", nil); err == nil {
+		t.Error("expected error for missing port")
+	}
+}
+
+func TestValidateURLWithPrivate(t *testing.T) {
+	// Standard HTTPS URL
+	if err := ValidateURLWithPrivate("https://api.example.com/webhook", false); err != nil {
+		t.Errorf("expected valid HTTPS URL, got: %v", err)
+	}
+
+	// HTTP URL with allowPrivate=false
+	if err := ValidateURLWithPrivate("http://api.example.com/webhook", false); err == nil {
+		t.Error("expected error for HTTP when allowPrivate=false")
+	}
+
+	// HTTP URL with allowPrivate=true
+	if err := ValidateURLWithPrivate("http://localhost:8080/webhook", true); err != nil {
+		t.Errorf("expected valid HTTP when allowPrivate=true, got: %v", err)
+	}
+
+	// Credentials in URL should be rejected
+	if err := ValidateURLWithPrivate("https://user:pass@api.example.com/webhook", false); err == nil {
+		t.Error("expected error for URL with credentials")
+	}
+
+	// Missing host
+	if err := ValidateURLWithPrivate("https:///webhook", false); err == nil {
+		t.Error("expected error for URL without host")
+	}
+
+	// URL too long (> 2048 chars)
+	tooLong := "https://example.com/" + string(make([]byte, 2050))
+	if err := ValidateURLWithPrivate(tooLong, false); err == nil {
+		t.Error("expected error for URL exceeding 2048 chars")
+	}
+}
+
+func TestDeliverAndDeliverOnce(t *testing.T) {
+	secret := []byte("test-webhook-secret-key-32b-long!")
+	var receivedTimestamp, receivedSignature, receivedUA string
+	var receivedBody []byte
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedTimestamp = r.Header.Get("X-Mailhost-Timestamp")
+		receivedSignature = r.Header.Get("X-Mailhost-Signature")
+		receivedUA = r.Header.Get("User-Agent")
+		receivedBody, _ = io.ReadAll(r.Body)
+
+		switch r.URL.Path {
+		case "/success":
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"status":"ok"}`))
+		case "/client-error":
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte(`{"error":"bad_request"}`))
+		case "/server-error":
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(`{"error":"server_error"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	client := NewWithSecurity(true)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	payload := map[string]string{"event": "email.delivered", "id": "msg-123"}
+
+	// Test Deliver success
+	err := client.Deliver(ctx, srv.URL+"/success", secret, payload)
+	if err != nil {
+		t.Fatalf("Deliver failed: %v", err)
+	}
+	if receivedTimestamp == "" || !strings.HasPrefix(receivedSignature, "v1=") {
+		t.Errorf("missing signature headers: ts=%s, sig=%s", receivedTimestamp, receivedSignature)
+	}
+	if receivedUA != "mailhost-webhook/1" {
+		t.Errorf("unexpected User-Agent: %s", receivedUA)
+	}
+
+	// Verify HMAC signature
+	mac := hmac.New(sha256.New, secret)
+	mac.Write([]byte(receivedTimestamp + "."))
+	mac.Write(receivedBody)
+	expectedSig := "v1=" + hex.EncodeToString(mac.Sum(nil))
+	if receivedSignature != expectedSig {
+		t.Errorf("signature mismatch: got %s, want %s", receivedSignature, expectedSig)
+	}
+
+	// Test Deliver client-error (400 - should fail fast without retry)
+	err = client.Deliver(ctx, srv.URL+"/client-error", secret, payload)
+	if err == nil || !strings.Contains(err.Error(), "400") {
+		t.Errorf("expected 400 error, got: %v", err)
+	}
+
+	// Test DeliverOnce
+	code, latency, snippet, err := client.DeliverOnce(ctx, srv.URL+"/success", secret, payload)
+	if err != nil || code != 200 || !strings.Contains(snippet, "ok") || latency < 0 {
+		t.Errorf("DeliverOnce failed: code=%d, latency=%d, snippet=%s, err=%v", code, latency, snippet, err)
+	}
+
+	// Test unmarshalable event in Deliver & DeliverOnce
+	unmarshalable := make(chan int)
+	if err := client.Deliver(ctx, srv.URL, secret, unmarshalable); err == nil {
+		t.Error("expected marshal error in Deliver")
+	}
+	if _, _, _, err := client.DeliverOnce(ctx, srv.URL, secret, unmarshalable); err == nil {
+		t.Error("expected marshal error in DeliverOnce")
+	}
+
+	// Test client creation with security enabled (allowPrivate=false)
+	secureClient := NewWithSecurity(false)
+	if secureClient == nil || secureClient.http == nil {
+		t.Fatal("expected non-nil secureClient")
+	}
+
+	// Test Deliver with cancelled context
+	canceledCtx, cancelNow := context.WithCancel(context.Background())
+	cancelNow()
+	if err := client.Deliver(canceledCtx, srv.URL+"/success", secret, payload); err == nil {
+		t.Error("expected error for canceled context in Deliver")
+	}
+}
+
+
 

@@ -1,9 +1,13 @@
 package inbound
 
 import (
+	"context"
 	"errors"
 	"log/slog"
+	"strings"
 	"testing"
+
+	"github.com/emersion/go-smtp"
 
 	"mailhost/internal/config"
 	"mailhost/internal/mailer"
@@ -111,4 +115,122 @@ func TestNewServerConfig(t *testing.T) {
 		t.Errorf("unexpected server config: addr=%s, domain=%s", s.Addr, s.Domain)
 	}
 }
+
+func TestInboundSession(t *testing.T) {
+	be := &Backend{
+		cfg: &config.Config{MaxMessageBytes: 100},
+	}
+	sess := &session{b: be}
+
+	// AuthMechanisms
+	mechs := sess.AuthMechanisms()
+	if len(mechs) != 2 {
+		t.Errorf("expected 2 auth mechs, got %v", mechs)
+	}
+	if _, err := sess.Auth("UNSUPPORTED"); err != smtp.ErrAuthFailed {
+		t.Errorf("expected ErrAuthFailed for unsupported mech, got: %v", err)
+	}
+	if _, err := sess.Auth("PLAIN"); err != nil {
+		t.Errorf("expected PLAIN server: %v", err)
+	}
+	if _, err := sess.Auth("LOGIN"); err != nil {
+		t.Errorf("expected LOGIN server: %v", err)
+	}
+
+	// Logout and Reset
+	sess.from = "someone@example.com"
+	sess.Reset()
+	if sess.from != "" {
+		t.Error("expected from to be reset")
+	}
+	if err := sess.Logout(); err != nil {
+		t.Errorf("unexpected error on Logout: %v", err)
+	}
+
+	// Submission without auth
+	beSub := &Backend{cfg: &config.Config{}, submission: true}
+	sessSub := &session{b: beSub}
+	if err := sessSub.Mail("from@example.com", nil); err == nil {
+		t.Error("expected error on submission server without auth")
+	}
+
+	// Authenticated session with sender restriction
+	sessAuth := &session{
+		b:             be,
+		authAccountID: "acct-1",
+		authEmail:     "authorized@example.com",
+	}
+	if err := sessAuth.Mail("bad-email", nil); err != errBadAddress {
+		t.Errorf("expected errBadAddress, got: %v", err)
+	}
+	if err := sessAuth.Mail("spoofed@example.com", nil); err == nil {
+		t.Error("expected error for spoofed sender")
+	}
+	if err := sessAuth.Mail("authorized@example.com", nil); err != nil {
+		t.Errorf("expected success for authorized sender: %v", err)
+	}
+
+	// Rcpt for authenticated session
+	if err := sessAuth.Rcpt("invalid-rcpt", nil); err != errBadAddress {
+		t.Errorf("expected errBadAddress for invalid rcpt, got: %v", err)
+	}
+	if err := sessAuth.Rcpt("valid@example.com", nil); err != nil {
+		t.Errorf("expected success for valid rcpt: %v", err)
+	}
+	if len(sessAuth.authRcpts) != 1 || sessAuth.authRcpts[0] != "valid@example.com" {
+		t.Errorf("unexpected authRcpts: %v", sessAuth.authRcpts)
+	}
+
+	// Data too large
+	largeData := strings.NewReader(strings.Repeat("A", 150))
+	if err := sess.Data(largeData); err != smtp.ErrDataTooLarge {
+		t.Errorf("expected ErrDataTooLarge, got: %v", err)
+	}
+
+	// NewSubmissionServer
+	subSrv, err := NewSubmissionServer(nil, nil, &config.Config{SMTPAddr: ":587"}, slog.Default())
+	if err != nil {
+		t.Fatalf("NewSubmissionServer failed: %v", err)
+	}
+	subSrv.SetDocstore(nil)
+}
+
+func TestBackendResolveAndOutbound(t *testing.T) {
+	be := &Backend{cfg: &config.Config{}}
+	ctx := context.Background()
+
+	// resolve invalid addresses
+	if _, err := be.resolve(ctx, "no-at-sign"); err != errBadAddress {
+		t.Errorf("expected errBadAddress, got: %v", err)
+	}
+	if _, err := be.resolve(ctx, "@missinglocal.com"); err != errBadAddress {
+		t.Errorf("expected errBadAddress for missing local part, got: %v", err)
+	}
+	if _, err := be.resolve(ctx, "user@"); err != errBadAddress {
+		t.Errorf("expected errBadAddress for missing domain, got: %v", err)
+	}
+
+	// resolve without DB returns errRelayDenied
+	if _, err := be.resolve(ctx, "user@example.com"); err != errRelayDenied {
+		t.Errorf("expected errRelayDenied when DB is nil, got: %v", err)
+	}
+
+	// NewSession
+	sess, err := be.NewSession(nil)
+	if err != nil || sess == nil {
+		t.Fatalf("NewSession failed: %v", err)
+	}
+
+	// Authenticated session without recipients in Data()
+	s := &session{
+		b:             be,
+		authAccountID: "acct-1",
+		authRcpts:     nil,
+	}
+	if err := s.Data(strings.NewReader("hello")); err == nil {
+		t.Error("expected 503 error for Data() without recipients in authenticated session")
+	}
+}
+
+
 

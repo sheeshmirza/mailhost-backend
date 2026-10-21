@@ -69,9 +69,27 @@ func TestLivePostgresConnectAndPing(t *testing.T) {
 		t.Fatalf("Ping failed: %v", err)
 	}
 
+	// Test Migrate
+	if err := Migrate(ctx, pool); err != nil {
+		t.Fatalf("Migrate failed: %v", err)
+	}
+
+	// Test MaintainPartitions with retention
+	if err := MaintainPartitions(ctx, pool, 3); err != nil {
+		t.Fatalf("MaintainPartitions failed: %v", err)
+	}
+
 	// Verify idempotency cleanup on live pool
 	if err := ExpireIdempotencyKeys(ctx, pool, 10); err != nil {
 		t.Errorf("ExpireIdempotencyKeys failed: %v", err)
 	}
+
+	// Test Connect with small maxConns (<= 4)
+	smallPool, err := Connect(ctx, connURL, 2)
+	if err != nil {
+		t.Fatalf("Connect with small maxConns failed: %v", err)
+	}
+	smallPool.Close()
 }
+
 

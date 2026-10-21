@@ -1,6 +1,13 @@
 package mailer
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
+	"net"
+	"net/smtp"
+	"net/textproto"
 	"strings"
 	"testing"
 	"time"
@@ -315,4 +322,77 @@ func TestDKIMParseInvalidKey(t *testing.T) {
 		t.Error("expected error for invalid private key DER")
 	}
 }
+
+func TestParsePrivateKeyPKCS1(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("failed to generate key: %v", err)
+	}
+	der := x509.MarshalPKCS1PrivateKey(key)
+	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: der})
+
+	signer, err := ParsePrivateKey(pemBytes)
+	if err != nil {
+		t.Fatalf("ParsePrivateKey failed for PKCS1 key: %v", err)
+	}
+	if signer == nil {
+		t.Fatal("expected non-nil signer for PKCS1 key")
+	}
+}
+
+func TestAuthenticateClient(t *testing.T) {
+	// Empty username should return nil without touching client
+	if err := AuthenticateClient(nil, "localhost", "", ""); err != nil {
+		t.Errorf("expected nil for empty username, got: %v", err)
+	}
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	defer ln.Close()
+
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+
+		tp := textproto.NewConn(conn)
+		_ = tp.PrintfLine("220 smtp.local ESMTP")
+		for {
+			line, err := tp.ReadLine()
+			if err != nil {
+				return
+			}
+			parts := strings.Split(line, " ")
+			cmd := strings.ToUpper(parts[0])
+			switch cmd {
+			case "EHLO":
+				_ = tp.PrintfLine("250-smtp.local")
+				_ = tp.PrintfLine("250 AUTH PLAIN LOGIN")
+			case "AUTH":
+				_ = tp.PrintfLine("235 2.7.0 Authentication succeeded")
+			case "QUIT":
+				_ = tp.PrintfLine("221 2.0.0 Bye")
+				return
+			default:
+				_ = tp.PrintfLine("502 Command not implemented")
+			}
+		}
+	}()
+
+	client, err := smtp.Dial(ln.Addr().String())
+	if err != nil {
+		t.Fatalf("failed to dial mock smtp: %v", err)
+	}
+	defer client.Close()
+
+	if err := AuthenticateClient(client, "127.0.0.1", "testuser", "testpass"); err != nil {
+		t.Fatalf("AuthenticateClient failed: %v", err)
+	}
+}
+
+
 
