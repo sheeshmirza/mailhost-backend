@@ -569,6 +569,12 @@ BEGIN
     END IF;
 END $$;
 
+CREATE INDEX IF NOT EXISTS deliveries_domain_idx ON deliveries (domain_id);
+CREATE INDEX IF NOT EXISTS events_delivery_idx ON events (delivery_id);
+CREATE INDEX IF NOT EXISTS events_domain_idx ON events (domain_id);
+CREATE INDEX IF NOT EXISTS webhook_deliveries_webhook_idx ON webhook_deliveries (webhook_id);
+CREATE INDEX IF NOT EXISTS event_rollups_domain_idx ON event_rollups (domain_id);
+
 -- Reconcile event_rollups with historical events table data
 INSERT INTO event_rollups (account_id, domain_id, bucket, type, shard, count)
 SELECT e.account_id, e.domain_id, date_trunc('hour', e.created_at), e.type, 0, count(*)

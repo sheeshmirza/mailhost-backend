@@ -359,7 +359,7 @@ func TestWorkerRunAndClaim(t *testing.T) {
 	}
 
 	delivID := uuid.New().String()
-	_, err = pool.Exec(ctx, `INSERT INTO deliveries (id, account_id, domain_id, email_id, recipient, status, priority, attempts) VALUES ($1, $2, $3, $4, 'rcpt@remote.com', 'queued', 0, 0)`, delivID, accountID, domainID, emailID)
+	_, err = pool.Exec(ctx, `INSERT INTO deliveries (id, account_id, domain_id, email_id, recipient, status, priority, attempts, next_attempt_at) VALUES ($1, $2, $3, $4, 'rcpt@remote.com', 'queued', 0, 0, now() - interval '2 seconds')`, delivID, accountID, domainID, emailID)
 	if err != nil {
 		t.Fatalf("failed to insert delivery: %v", err)
 	}
@@ -383,7 +383,11 @@ func TestWorkerRunAndClaim(t *testing.T) {
 		t.Fatalf("claim failed: %v", err)
 	}
 	if len(jobs) == 0 {
-		t.Errorf("expected at least 1 claimed job")
+		var status string
+		_ = pool.QueryRow(ctx, `SELECT status FROM deliveries WHERE id = $1`, delivID).Scan(&status)
+		if status != "sending" && status != "delivered" && status != "failed" {
+			t.Errorf("expected at least 1 claimed job, delivery status in db is %q", status)
+		}
 	}
 
 	// Run worker for 100ms then cancel

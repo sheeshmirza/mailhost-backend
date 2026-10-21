@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -72,28 +73,61 @@ func getBroker() BrokerPublisher {
 
 func pgUUID(u uuid.UUID) pgtype.UUID { return pgtype.UUID{Bytes: u, Valid: u != uuid.Nil} }
 
+func isRetryableTxErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == "40P01" || pgErr.Code == "40001"
+	}
+	return strings.Contains(err.Error(), "deadlock detected")
+}
+
 // Enqueue stores emails and their deliveries in one transaction using COPY for throughput.
 // Suppressed recipients are recorded as failed instead of queued.
 func Enqueue(ctx context.Context, db *pgxpool.Pool, accountID uuid.UUID, emails []Email) error {
 	if len(emails) == 0 {
 		return nil
 	}
-	tx, err := db.Begin(ctx)
-	if err != nil {
-		return err
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		tx, err := db.Begin(ctx)
+		if err != nil {
+			return err
+		}
+		queuedMsgs, err := enqueue(ctx, tx, accountID, emails)
+		if err != nil {
+			_ = tx.Rollback(ctx)
+			if isRetryableTxErr(err) {
+				lastErr = err
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(time.Duration(15*(attempt+1)) * time.Millisecond):
+					continue
+				}
+			}
+			return err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			if isRetryableTxErr(err) {
+				lastErr = err
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(time.Duration(15*(attempt+1)) * time.Millisecond):
+					continue
+				}
+			}
+			return err
+		}
+		if b := getBroker(); b != nil && len(queuedMsgs) > 0 {
+			_ = b.PublishBatch(ctx, queuedMsgs)
+		}
+		return nil
 	}
-	defer tx.Rollback(ctx)
-	queuedMsgs, err := enqueue(ctx, tx, accountID, emails)
-	if err != nil {
-		return err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return err
-	}
-	if b := getBroker(); b != nil && len(queuedMsgs) > 0 {
-		_ = b.PublishBatch(ctx, queuedMsgs)
-	}
-	return nil
+	return lastErr
 }
 
 // EnqueueIdempotent atomically stores an API response and enqueues the messages.

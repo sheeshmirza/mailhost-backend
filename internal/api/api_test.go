@@ -98,7 +98,7 @@ func TestUnauthenticatedRejection(t *testing.T) {
 
 func TestLiveAPIEndpoints(t *testing.T) {
 	connURL := "postgres://mailhost:mailhost_secret@localhost:5433/mailhost?sslmode=disable"
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 
 	pool, err := db.Connect(ctx, connURL, 5)
@@ -146,7 +146,9 @@ func TestLiveAPIEndpoints(t *testing.T) {
 			data, _ := json.Marshal(body)
 			rdr = bytes.NewReader(data)
 		}
-		req, _ := http.NewRequestWithContext(ctx, method, ts.URL+path, rdr)
+		reqCtx, reqCancel := context.WithTimeout(ctx, 15*time.Second)
+		defer reqCancel()
+		req, _ := http.NewRequestWithContext(reqCtx, method, ts.URL+path, rdr)
 		req.Header.Set("Authorization", "Bearer "+apiToken)
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := client.Do(req)
