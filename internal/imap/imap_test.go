@@ -38,6 +38,22 @@ func TestNumSetContains(t *testing.T) {
 	if numSetContains(uidSet, 5, 101) {
 		t.Error("expected uidSet to not contain UID 101")
 	}
+
+	pSeq := &imap.SeqSet{}
+	pSeq.AddNum(5)
+	if !numSetContains(pSeq, 5, 100) || numSetContains((*imap.SeqSet)(nil), 5, 100) {
+		t.Error("unexpected pointer SeqSet result")
+	}
+
+	pUID := &imap.UIDSet{}
+	pUID.AddNum(100)
+	if !numSetContains(pUID, 5, 100) || numSetContains((*imap.UIDSet)(nil), 5, 100) {
+		t.Error("unexpected pointer UIDSet result")
+	}
+
+	if numSetContains(nil, 5, 100) {
+		t.Error("expected false for nil numSet")
+	}
 }
 
 func TestMatchesSearch(t *testing.T) {
@@ -94,10 +110,44 @@ func TestMatchesSearch(t *testing.T) {
 
 	// 5. Date matching
 	dateCriteria := &imap.SearchCriteria{
-		Since: time.Date(2026, 10, 19, 0, 0, 0, 0, time.UTC),
+		Since:  time.Date(2026, 10, 19, 0, 0, 0, 0, time.UTC),
+		Before: time.Date(2026, 10, 25, 0, 0, 0, 0, time.UTC),
 	}
 	if !matchesSearch(msg, 1, dateCriteria) {
-		t.Error("expected Oct 20 to match Since Oct 19")
+		t.Error("expected Oct 20 to match [Since Oct 19, Before Oct 25]")
+	}
+	dateCriteriaFail := &imap.SearchCriteria{
+		Before: time.Date(2026, 10, 15, 0, 0, 0, 0, time.UTC),
+	}
+	if matchesSearch(msg, 1, dateCriteriaFail) {
+		t.Error("expected Oct 20 to fail Before Oct 15")
+	}
+
+	// 6. SeqNum & UID matching
+	seqCrit := &imap.SearchCriteria{
+		SeqNum: []imap.SeqSet{imap.SeqSetNum(1)},
+		UID:    []imap.UIDSet{imap.UIDSetNum(42)},
+	}
+	if !matchesSearch(msg, 1, seqCrit) {
+		t.Error("expected seq 1, uid 42 to match")
+	}
+	seqCritFail := &imap.SearchCriteria{
+		SeqNum: []imap.SeqSet{imap.SeqSetNum(2)},
+	}
+	if matchesSearch(msg, 1, seqCritFail) {
+		t.Error("expected seq 1 to fail SeqNum 2")
+	}
+	uidCritFail := &imap.SearchCriteria{
+		UID: []imap.UIDSet{imap.UIDSetNum(99)},
+	}
+	if matchesSearch(msg, 1, uidCritFail) {
+		t.Error("expected uid 42 to fail UID 99")
+	}
+
+	// Smaller failure
+	smallerFail := &imap.SearchCriteria{Smaller: 500}
+	if matchesSearch(msg, 1, smallerFail) {
+		t.Error("expected 1024 to fail Smaller 500")
 	}
 }
 
@@ -248,8 +298,13 @@ func TestSessionLivePostgres(t *testing.T) {
 		t.Errorf("Copy failed: %v", err)
 	}
 
-	// 9. AppendLimit
+	// 9. AppendLimit & Idle
 	_ = sess.AppendLimit()
+	idleStop := make(chan struct{})
+	close(idleStop)
+	if err := sess.Idle(nil, idleStop); err != nil {
+		t.Errorf("Idle failed: %v", err)
+	}
 
 	// 10. Unselect & Unauthenticate
 	if err := sess.Unselect(); err != nil {
@@ -360,7 +415,7 @@ func TestIMAPProtocolLive(t *testing.T) {
 	if err := client.Store(imap.SeqSetNum(1), &imap.StoreFlags{
 		Op:    imap.StoreFlagsAdd,
 		Flags: []imap.Flag{imap.FlagFlagged},
-	}, nil).Wait(); err != nil {
+	}, nil).Close(); err != nil {
 		t.Fatalf("Store flags failed: %v", err)
 	}
 
@@ -388,8 +443,8 @@ func TestIMAPProtocolLive(t *testing.T) {
 	_ = client.Store(imap.SeqSetNum(1), &imap.StoreFlags{
 		Op:    imap.StoreFlagsAdd,
 		Flags: []imap.Flag{imap.FlagDeleted},
-	}, nil).Wait()
-	_ = client.Expunge().Collect()
+	}, nil).Close()
+	_, _ = client.Expunge().Collect()
 
 	// Status on Archive
 	if _, err := client.Status("Archive", &imap.StatusOptions{NumMessages: true}).Wait(); err != nil {

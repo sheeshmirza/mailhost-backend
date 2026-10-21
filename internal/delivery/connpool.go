@@ -50,9 +50,13 @@ func (pc *pooledConn) transact(ctx context.Context, from, rcpt string, raw []byt
 }
 
 func (pc *pooledConn) close() {
-	pc.conn.SetDeadline(time.Now().Add(5 * time.Second))
-	pc.c.Quit()
-	pc.c.Close()
+	if pc.conn != nil {
+		_ = pc.conn.SetDeadline(time.Now().Add(5 * time.Second))
+	}
+	if pc.c != nil {
+		_ = pc.c.Quit()
+		_ = pc.c.Close()
+	}
 }
 
 type hostPool struct {

@@ -10,7 +10,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
+	"mailhost/internal/broker"
 	"mailhost/internal/config"
+	"mailhost/internal/db"
 	"mailhost/internal/queue"
 )
 
@@ -159,6 +163,49 @@ func TestConnPoolEdgeCases(t *testing.T) {
 		t.Error("expected nil for empty pool get")
 	}
 
+	// put with max uses or expired age
+	pipeClient, pipeServer := net.Pipe()
+	defer pipeServer.Close()
+	pcUsed := &pooledConn{
+		conn:    pipeClient,
+		uses:    connMaxUses,
+		created: time.Now(),
+	}
+	poolUnbounded.put("host:25", pcUsed)
+
+	pipeClient2, pipeServer2 := net.Pipe()
+	defer pipeServer2.Close()
+	pcOld := &pooledConn{
+		conn:    pipeClient2,
+		uses:    1,
+		created: time.Now().Add(-connMaxAge - time.Hour),
+	}
+	poolUnbounded.put("host:25", pcOld)
+
+	// put valid connection
+	pipeClient3, pipeServer3 := net.Pipe()
+	defer pipeServer3.Close()
+	pcValid := &pooledConn{
+		conn:    pipeClient3,
+		uses:    1,
+		created: time.Now(),
+	}
+	poolUnbounded.put("host:25", pcValid)
+	if got := poolUnbounded.get("host:25"); got == nil {
+		t.Error("expected to retrieve valid pooled conn")
+	}
+
+	// dial edge cases
+	wDial := New(nil, &config.Config{AllowPrivateDelivery: true}, slog.Default())
+	ctxDial, cancelDial := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancelDial()
+	if _, err := wDial.dial(ctxDial, "localhost", "1025"); err != nil {
+		t.Logf("dial 1025: %v", err)
+	}
+	if _, err := wDial.dial(ctxDial, "localhost", "99999"); err == nil {
+		t.Error("expected error dialing invalid port")
+	}
+
 	// prune on empty pool
 	poolUnbounded.prune()
 	poolUnbounded.closeAll()
@@ -204,6 +251,14 @@ func TestDeliverToLiveMailpit(t *testing.T) {
 		t.Error("expected error for recipient address without @")
 	}
 
+	// Seed MX cache with localhost and send via w.send
+	_, _ = w.mx.GetOrLoad("mailpit.local", func() ([]string, error) {
+		return []string{"localhost"}, nil
+	})
+	if err := w.send(ctx, from, "recipient@mailpit.local", raw); err != nil {
+		t.Fatalf("send to mailpit.local failed: %v", err)
+	}
+
 	w.conns.closeAll()
 }
 
@@ -224,6 +279,15 @@ func TestWorkerProcessAndFlush(t *testing.T) {
 	}
 	w.process(j1)
 
+	// Process job exceeding max attempts
+	jMax := job{
+		ID:         "deliv-002",
+		Recipient:  "good@mailpit.local",
+		DomainName: "mailpit.local",
+		Attempts:   5,
+	}
+	w.process(jMax)
+
 	select {
 	case res := <-w.results:
 		if res.Status != "bounced" {
@@ -241,6 +305,128 @@ func TestWorkerProcessAndFlush(t *testing.T) {
 	l2 := w.hostLimiter("mx.test.com")
 	if l1 != l2 {
 		t.Error("expected cached limiter instance")
+	}
+}
+
+func TestWorkerMXHosts(t *testing.T) {
+	w := New(nil, &config.Config{}, slog.Default())
+	ctx := context.Background()
+	hosts, err := w.mxHosts(ctx, "gmail.com")
+	if err != nil || len(hosts) == 0 {
+		t.Errorf("expected MX hosts for gmail.com, got %v, err=%v", hosts, err)
+	}
+	// Cached lookup
+	hostsCached, err := w.mxHosts(ctx, "gmail.com")
+	if err != nil || len(hostsCached) != len(hosts) {
+		t.Errorf("expected cached MX hosts, got %v", hostsCached)
+	}
+	// Invalid domain
+	_, err = w.mxHosts(ctx, "nonexistent-domain-xyz-12345.test")
+	if err == nil {
+		t.Error("expected error for non-existent domain")
+	}
+}
+
+func TestWorkerRunAndClaim(t *testing.T) {
+	connURL := "postgres://mailhost:mailhost_secret@localhost:5433/mailhost?sslmode=disable"
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	pool, err := db.Connect(ctx, connURL, 5)
+	if err != nil {
+		t.Skipf("skipping live delivery postgres test: %v", err)
+		return
+	}
+	defer pool.Close()
+
+	accountID := uuid.New().String()
+	_, err = pool.Exec(ctx, `INSERT INTO accounts (id, name) VALUES ($1, 'Delivery Acct')`, accountID)
+	if err != nil {
+		t.Fatalf("failed to insert account: %v", err)
+	}
+	defer pool.Exec(context.Background(), `DELETE FROM accounts WHERE id = $1`, accountID)
+
+	domainID := uuid.New().String()
+	_, err = pool.Exec(ctx, `INSERT INTO domains (id, account_id, name, status, verification_token, dkim_selector, dkim_private_key, dkim_public_key, webhook_secret, region) VALUES ($1, $2, 'delivery.local', 'verified', 'tok', 'k1', 'priv', 'pub', 'sec', 'us-east-1')`, domainID, accountID)
+	if err != nil {
+		t.Fatalf("failed to insert domain: %v", err)
+	}
+
+	emailID := uuid.New().String()
+	_, err = pool.Exec(ctx, `INSERT INTO emails (id, account_id, domain_id, from_addr, subject, message_id, raw) VALUES ($1, $2, $3, 'sender@delivery.local', 'Subj', 'msg-001', 'raw')`, emailID, accountID, domainID)
+	if err != nil {
+		t.Fatalf("failed to insert email: %v", err)
+	}
+
+	delivID := uuid.New().String()
+	_, err = pool.Exec(ctx, `INSERT INTO deliveries (id, account_id, domain_id, email_id, recipient, status, priority, attempts) VALUES ($1, $2, $3, $4, 'rcpt@remote.com', 'queued', 0, 0)`, delivID, accountID, domainID, emailID)
+	if err != nil {
+		t.Fatalf("failed to insert delivery: %v", err)
+	}
+
+	cfg := &config.Config{
+		Workers:              2,
+		PollInterval:         20 * time.Millisecond,
+		AllowPrivateDelivery: true,
+		MaxAttempts:          3,
+	}
+	w := New(pool, cfg, slog.Default())
+	bClient, bErr := broker.New("amqp://guest:guest@localhost:5673/")
+	if bErr == nil {
+		w.SetBroker(bClient)
+		defer bClient.Close()
+	}
+
+	// Test claim
+	jobs, err := w.claim(ctx, 10)
+	if err != nil {
+		t.Fatalf("claim failed: %v", err)
+	}
+	if len(jobs) == 0 {
+		t.Errorf("expected at least 1 claimed job")
+	}
+
+	// Run worker for 100ms then cancel
+	runCtx, runCancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer runCancel()
+	w.Run(runCtx)
+}
+
+func TestWorkerFlushLoop(t *testing.T) {
+	connURL := "postgres://mailhost:mailhost_secret@localhost:5433/mailhost?sslmode=disable"
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	pool, err := db.Connect(ctx, connURL, 5)
+	if err != nil {
+		t.Skipf("skipping live delivery flush test: %v", err)
+		return
+	}
+	defer pool.Close()
+
+	w := New(pool, &config.Config{}, slog.Default())
+	w.results = make(chan queue.Completion, 5)
+
+	done := make(chan struct{})
+	go func() {
+		w.flushLoop()
+		close(done)
+	}()
+
+	// Push a completion
+	w.results <- queue.Completion{
+		DeliveryID: uuid.New().String(),
+		Status:     "delivered",
+		Detail:     "test",
+	}
+
+	// Close results channel to terminate flushLoop
+	close(w.results)
+	select {
+	case <-done:
+		// Clean exit
+	case <-time.After(2 * time.Second):
+		t.Fatal("flushLoop did not terminate after closing results channel")
 	}
 }
 

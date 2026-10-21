@@ -2,15 +2,20 @@ package inbound
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/emersion/go-smtp"
+	"github.com/google/uuid"
 
 	"mailhost/internal/config"
+	"mailhost/internal/db"
 	"mailhost/internal/mailer"
+	"mailhost/internal/secretbox"
 )
 
 func TestCleanAddress(t *testing.T) {
@@ -229,6 +234,191 @@ func TestBackendResolveAndOutbound(t *testing.T) {
 	}
 	if err := s.Data(strings.NewReader("hello")); err == nil {
 		t.Error("expected 503 error for Data() without recipients in authenticated session")
+	}
+}
+
+func TestLiveInboundFlow(t *testing.T) {
+	connURL := "postgres://mailhost:mailhost_secret@localhost:5433/mailhost?sslmode=disable"
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	pool, err := db.Connect(ctx, connURL, 5)
+	if err != nil {
+		t.Skipf("skipping live inbound postgres test: %v", err)
+		return
+	}
+	defer pool.Close()
+
+	accountID := uuid.New().String()
+	_, err = pool.Exec(ctx, `INSERT INTO accounts (id, name) VALUES ($1, 'Inbound Live Acct')`, accountID)
+	if err != nil {
+		t.Fatalf("failed to insert account: %v", err)
+	}
+	defer pool.Exec(context.Background(), `DELETE FROM accounts WHERE id = $1`, accountID)
+
+	boxKey := make([]byte, 32)
+	box, _ := secretbox.New(boxKey)
+	dkimPrivPEM, dkimDNS, err := mailer.GenerateDKIMKey()
+	if err != nil {
+		t.Fatalf("GenerateDKIMKey failed: %v", err)
+	}
+	encDKIM, err := box.Seal(dkimPrivPEM)
+	if err != nil {
+		t.Fatalf("box.Seal failed: %v", err)
+	}
+
+	domainID := uuid.New().String()
+	domName := "inbound-" + accountID[:8] + ".local"
+	_, err = pool.Exec(ctx, `
+INSERT INTO domains (id, account_id, name, status, verification_token, dkim_selector, dkim_private_key, dkim_public_key, webhook_secret, region)
+VALUES ($1, $2, $3, 'verified', 'tok_ver', 'k1', $4, $5, 'sec', 'us-east-1')`,
+		domainID, accountID, domName, encDKIM, dkimDNS)
+	if err != nil {
+		t.Fatalf("failed to insert domain: %v", err)
+	}
+
+	// Insert alias
+	_, err = pool.Exec(ctx, `
+INSERT INTO aliases (account_id, domain_id, local_part, destinations, store_copy)
+VALUES ($1, $2, 'sales', ARRAY['partner@remote.com'], true)`, accountID, domainID)
+	if err != nil {
+		t.Fatalf("failed to insert alias: %v", err)
+	}
+
+	cfg := &config.Config{
+		Hostname:             "localhost",
+		MaxMessageBytes:      10 << 20,
+		AllowPrivateDelivery: true,
+	}
+	srv, err := NewServer(pool, box, cfg, slog.Default())
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
+	}
+
+	// Inbound message to alias
+	sess, err := srv.be.NewSession(nil)
+	if err != nil {
+		t.Fatalf("NewSession failed: %v", err)
+	}
+	s := sess.(*session)
+
+	if err := s.Mail("customer@external.com", nil); err != nil {
+		t.Fatalf("Mail failed: %v", err)
+	}
+	if err := s.Rcpt("sales@"+domName, nil); err != nil {
+		t.Fatalf("Rcpt failed: %v", err)
+	}
+	msgData := "From: customer@external.com\r\nTo: sales@" + domName + "\r\nSubject: Product Inquiry\r\n\r\nHello, interested in product."
+	if err := s.Data(strings.NewReader(msgData)); err != nil {
+		t.Fatalf("Data failed: %v", err)
+	}
+
+	// Verify inbound_emails row
+	var count int
+	_ = pool.QueryRow(ctx, `SELECT count(*) FROM inbound_emails WHERE domain_id = $1`, domainID).Scan(&count)
+	if count == 0 {
+		t.Errorf("expected inbound email to be stored in inbound_emails")
+	}
+
+	// Inbound bounce handling
+	emailID := uuid.New().String()
+	delivID := uuid.New().String()
+	_, _ = pool.Exec(ctx, `INSERT INTO emails (id, account_id, domain_id, from_addr, subject, message_id, raw) VALUES ($1, $2, $3, 'out@'||$4, 'Out', 'msg-002', 'raw')`, emailID, accountID, domainID, domName)
+	_, _ = pool.Exec(ctx, `INSERT INTO deliveries (id, account_id, domain_id, email_id, recipient, status, attempts) VALUES ($1, $2, $3, $4, 'bad@remote.com', 'sending', 1)`, delivID, accountID, domainID, emailID)
+
+	bounceSess, _ := srv.be.NewSession(nil)
+	bs := bounceSess.(*session)
+	_ = bs.Mail("<>", nil)
+	_ = bs.Rcpt("bounce+"+delivID+"@"+domName, nil)
+	bounceMsg := "Subject: Undelivered Mail\r\nDiagnostic-Code: smtp; 550 User unknown\r\n\r\nFailure notice."
+	if err := bs.Data(strings.NewReader(bounceMsg)); err != nil {
+		t.Fatalf("bounce Data failed: %v", err)
+	}
+}
+
+func TestLiveSubmissionOutboundFlow(t *testing.T) {
+	connURL := "postgres://mailhost:mailhost_secret@localhost:5433/mailhost?sslmode=disable"
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	pool, err := db.Connect(ctx, connURL, 5)
+	if err != nil {
+		t.Skipf("skipping live submission postgres test: %v", err)
+		return
+	}
+	defer pool.Close()
+
+	accountID := uuid.New().String()
+	_, err = pool.Exec(ctx, `INSERT INTO accounts (id, name) VALUES ($1, 'Submission Live Acct')`, accountID)
+	if err != nil {
+		t.Fatalf("failed to insert account: %v", err)
+	}
+	defer pool.Exec(context.Background(), `DELETE FROM accounts WHERE id = $1`, accountID)
+
+	boxKey := make([]byte, 32)
+	box, _ := secretbox.New(boxKey)
+	dkimPrivPEM, dkimDNS, err := mailer.GenerateDKIMKey()
+	if err != nil {
+		t.Fatalf("GenerateDKIMKey failed: %v", err)
+	}
+	encDKIM, err := box.Seal(dkimPrivPEM)
+	if err != nil {
+		t.Fatalf("box.Seal failed: %v", err)
+	}
+
+	domainID := uuid.New().String()
+	domName := "sub-" + accountID[:8] + ".local"
+	_, err = pool.Exec(ctx, `
+INSERT INTO domains (id, account_id, name, status, verification_token, dkim_selector, dkim_private_key, dkim_public_key, webhook_secret, region)
+VALUES ($1, $2, $3, 'verified', 'tok_ver', 'k1', $4, $5, 'sec', 'us-east-1')`,
+		domainID, accountID, domName, encDKIM, dkimDNS)
+	if err != nil {
+		t.Fatalf("failed to insert domain: %v", err)
+	}
+
+	rawKey := "sub_api_key_" + accountID[:8]
+	h := sha256.Sum256([]byte(rawKey))
+	_, err = pool.Exec(ctx, `INSERT INTO api_keys (account_id, key_hash, name, permission) VALUES ($1, $2, 'Submission Key', 'full_access')`, accountID, h[:])
+	if err != nil {
+		t.Fatalf("failed to insert api key: %v", err)
+	}
+
+	cfg := &config.Config{
+		Hostname:             "localhost",
+		MaxMessageBytes:      10 << 20,
+		AllowPrivateDelivery: true,
+	}
+	srv, err := NewSubmissionServer(pool, box, cfg, slog.Default())
+	if err != nil {
+		t.Fatalf("NewSubmissionServer failed: %v", err)
+	}
+
+	sess, err := srv.be.NewSession(nil)
+	if err != nil {
+		t.Fatalf("NewSession failed: %v", err)
+	}
+	s := sess.(*session)
+
+	// Authenticate
+	if err := s.authenticate("api", rawKey); err != nil {
+		t.Fatalf("authenticate failed: %v", err)
+	}
+
+	// Verify cached auth
+	if err := s.authenticate("api", rawKey); err != nil {
+		t.Fatalf("cached authenticate failed: %v", err)
+	}
+
+	if err := s.Mail("sales@"+domName, nil); err != nil {
+		t.Fatalf("Mail failed: %v", err)
+	}
+	if err := s.Rcpt("recipient@remote.com", nil); err != nil {
+		t.Fatalf("Rcpt failed: %v", err)
+	}
+
+	outRaw := "From: sales@" + domName + "\r\nTo: recipient@remote.com\r\nSubject: Order Receipt\r\n\r\nThank you for your order."
+	if err := s.Data(strings.NewReader(outRaw)); err != nil {
+		t.Fatalf("Data failed: %v", err)
 	}
 }
 
