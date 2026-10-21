@@ -160,21 +160,39 @@ GROUP BY 1, 2 ORDER BY 1`, accountID(r), rollFrom, rollTo, interval, domainID, f
 		return
 	}
 
-	rate := func(n int64) float64 {
-		if totals.Sent == 0 {
+	calcRate := func(numerator, denominator int64) float64 {
+		if denominator <= 0 || numerator <= 0 {
 			return 0
 		}
-		return float64(n) / float64(totals.Sent)
+		val := float64(numerator) / float64(denominator)
+		if val > 1.0 {
+			return 1.0
+		}
+		return val
 	}
+
+	sentDenom := totals.Sent
+	if sentDenom <= 0 {
+		sentDenom = totals.Delivered + totals.Bounced + totals.Failed
+	}
+	openDenom := totals.Delivered
+	if openDenom <= 0 {
+		openDenom = sentDenom
+	}
+	clickDenom := totals.Delivered
+	if clickDenom <= 0 {
+		clickDenom = sentDenom
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"from": from, "to": to, "interval": interval, "domain_id": domainID,
 		"totals": totals,
 		"rates": map[string]float64{
-			"delivery_rate": rate(totals.Delivered),
-			"bounce_rate":   rate(totals.Bounced),
-			"failure_rate":  rate(totals.Failed),
-			"open_rate":     rate(totals.Opened),
-			"click_rate":    rate(totals.Clicked),
+			"delivery_rate": calcRate(totals.Delivered, sentDenom),
+			"bounce_rate":   calcRate(totals.Bounced, sentDenom),
+			"failure_rate":  calcRate(totals.Failed, sentDenom),
+			"open_rate":     calcRate(totals.Opened, openDenom),
+			"click_rate":    calcRate(totals.Clicked, clickDenom),
 		},
 		"series": series,
 	})

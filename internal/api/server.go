@@ -371,6 +371,42 @@ func (s *Server) StartBackgroundSchedulers(ctx context.Context) {
 			}
 		}
 	}()
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				s.reconcileRollups(ctx)
+			}
+		}
+	}()
+}
+
+func (s *Server) reconcileRollups(ctx context.Context) {
+	if s.db == nil {
+		return
+	}
+	_, err := s.db.Exec(ctx, `
+INSERT INTO event_rollups (account_id, domain_id, bucket, type, shard, count)
+SELECT e.account_id, e.domain_id, date_trunc('hour', e.created_at), e.type, 0, count(*)
+FROM events e
+WHERE e.created_at >= now() - interval '24 hours'
+  AND NOT EXISTS (
+    SELECT 1 FROM event_rollups r
+    WHERE r.account_id = e.account_id
+      AND r.domain_id = e.domain_id
+      AND r.bucket = date_trunc('hour', e.created_at)
+      AND r.type = e.type
+)
+GROUP BY e.account_id, e.domain_id, date_trunc('hour', e.created_at), e.type
+ON CONFLICT (account_id, bucket, domain_id, type, shard)
+DO UPDATE SET count = event_rollups.count + EXCLUDED.count;`)
+	if err != nil {
+		s.log.Warn("reconcile rollups failed", "err", err)
+	}
 }
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {

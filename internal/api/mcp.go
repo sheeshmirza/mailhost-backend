@@ -568,7 +568,14 @@ SELECT type, sum(count)::bigint FROM combined GROUP BY type`, acct)
 			return "", err
 		}
 		defer rows.Close()
-		counters := map[string]int64{}
+		counters := map[string]int64{
+			"sent":      0,
+			"delivered": 0,
+			"opened":    0,
+			"clicked":   0,
+			"bounced":   0,
+			"failed":    0,
+		}
 		for rows.Next() {
 			var t string
 			var c int64

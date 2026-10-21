@@ -474,5 +474,9 @@ RETURNING domain_id, email_id, recipient`, deliveryID, accountID, detail).Scan(&
 	if err := enqueueWebhookEvents(ctx, tx, []webhookEvent{{accountID, "email.bounced", email, deliveryID, rcpt, detail}}); err != nil {
 		return err
 	}
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	metrics.Default.RecordEmail("bounced")
+	return nil
 }
