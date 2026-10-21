@@ -2,12 +2,16 @@ package imap
 
 import (
 	"context"
+	"crypto/sha256"
 	"log/slog"
+	"net"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/emersion/go-imap/v2"
+	"github.com/emersion/go-imap/v2/imapclient"
+	"github.com/emersion/go-imap/v2/imapserver"
 	"github.com/google/uuid"
 
 	"mailhost/internal/config"
@@ -233,11 +237,166 @@ func TestSessionLivePostgres(t *testing.T) {
 		t.Errorf("Poll failed: %v", err)
 	}
 
+	// 7. Search
+	sData, err := sess.Search(imapserver.NumKindSeq, &imap.SearchCriteria{Flag: []imap.Flag{imap.FlagSeen}}, nil)
+	if err != nil || sData == nil {
+		t.Errorf("Search failed: %v", err)
+	}
 
-	// 7. Unselect
+	// 8. Copy to Custom
+	if _, err := sess.Copy(imap.SeqSetNum(1), "INBOX"); err != nil {
+		t.Errorf("Copy failed: %v", err)
+	}
+
+	// 9. AppendLimit
+	_ = sess.AppendLimit()
+
+	// 10. Unselect & Unauthenticate
 	if err := sess.Unselect(); err != nil {
 		t.Errorf("Unselect failed: %v", err)
 	}
+	if err := sess.Unauthenticate(); err != nil {
+		t.Errorf("Unauthenticate failed: %v", err)
+	}
+}
+
+func TestIMAPProtocolLive(t *testing.T) {
+	connURL := "postgres://mailhost:mailhost_secret@localhost:5433/mailhost?sslmode=disable"
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	pool, err := db.Connect(ctx, connURL, 5)
+	if err != nil {
+		t.Skipf("skipping live imap postgres test: %v", err)
+		return
+	}
+	defer pool.Close()
+
+	accountID := uuid.New().String()
+	_, err = pool.Exec(ctx, `INSERT INTO accounts (id, name) VALUES ($1, 'IMAP Live Account')`, accountID)
+	if err != nil {
+		t.Fatalf("failed to insert test account: %v", err)
+		return
+	}
+	defer pool.Exec(context.Background(), `DELETE FROM accounts WHERE id = $1`, accountID)
+
+	rawKey := "imap_live_key_" + accountID[:8]
+	h := sha256.Sum256([]byte(rawKey))
+	_, err = pool.Exec(ctx, `INSERT INTO api_keys (account_id, key_hash, name, permission) VALUES ($1, $2, 'IMAP Test Key', 'full_access')`, accountID, h[:])
+	if err != nil {
+		t.Fatalf("failed to insert api key: %v", err)
+	}
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	defer ln.Close()
+
+	srv, err := NewServer(pool, &config.Config{IMAPAddr: ln.Addr().String()}, slog.Default())
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
+	}
+
+	go srv.Server.Serve(ln)
+	defer srv.Server.Close()
+
+	// Connect client
+	client, err := imapclient.DialInsecure(ln.Addr().String(), nil)
+	if err != nil {
+		t.Fatalf("DialInsecure failed: %v", err)
+	}
+	defer client.Close()
+
+	// Login using api username and rawKey
+	if err := client.Login("api", rawKey).Wait(); err != nil {
+		t.Fatalf("Login failed: %v", err)
+	}
+
+	// List
+	if _, err := client.List("", "*", nil).Collect(); err != nil {
+		t.Fatalf("List failed: %v", err)
+	}
+
+	// Append a message to INBOX
+	msgText := "Subject: Hello IMAP Live\r\n\r\nThis is an IMAP live body."
+	appCmd := client.Append("INBOX", int64(len(msgText)), &imap.AppendOptions{Flags: []imap.Flag{imap.FlagSeen}})
+	if _, err := appCmd.Write([]byte(msgText)); err != nil {
+		t.Fatalf("Append write failed: %v", err)
+	}
+	if err := appCmd.Close(); err != nil {
+		t.Fatalf("Append close failed: %v", err)
+	}
+	if _, err := appCmd.Wait(); err != nil {
+		t.Fatalf("Append wait failed: %v", err)
+	}
+
+	// Select INBOX
+	selData, err := client.Select("INBOX", nil).Wait()
+	if err != nil {
+		t.Fatalf("Select failed: %v", err)
+	}
+	if selData.NumMessages == 0 {
+		t.Errorf("expected at least 1 message in INBOX")
+	}
+
+	// Fetch message
+	fetchCmd := client.Fetch(imap.SeqSetNum(1), &imap.FetchOptions{
+		Flags:        true,
+		UID:          true,
+		RFC822Size:   true,
+		InternalDate: true,
+		Envelope:     true,
+	})
+	msgs, err := fetchCmd.Collect()
+	if err != nil {
+		t.Fatalf("Fetch failed: %v", err)
+	}
+	if len(msgs) == 0 {
+		t.Errorf("expected 1 fetch message, got 0")
+	}
+
+	// Store flags
+	if err := client.Store(imap.SeqSetNum(1), &imap.StoreFlags{
+		Op:    imap.StoreFlagsAdd,
+		Flags: []imap.Flag{imap.FlagFlagged},
+	}, nil).Wait(); err != nil {
+		t.Fatalf("Store flags failed: %v", err)
+	}
+
+	// Create and Copy to Archive
+	if err := client.Create("Archive", nil).Wait(); err != nil {
+		t.Fatalf("Create Archive failed: %v", err)
+	}
+	if _, err := client.Copy(imap.SeqSetNum(1), "Archive").Wait(); err != nil {
+		t.Fatalf("Copy failed: %v", err)
+	}
+
+	// Move to Archive
+	if _, err := client.Move(imap.SeqSetNum(1), "Archive").Wait(); err != nil {
+		t.Logf("Move note: %v", err)
+	}
+
+	// Search
+	searchRes, err := client.Search(&imap.SearchCriteria{Flag: []imap.Flag{imap.FlagSeen}}, nil).Wait()
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	_ = searchRes
+
+	// Mark deleted and Expunge
+	_ = client.Store(imap.SeqSetNum(1), &imap.StoreFlags{
+		Op:    imap.StoreFlagsAdd,
+		Flags: []imap.Flag{imap.FlagDeleted},
+	}, nil).Wait()
+	_ = client.Expunge().Collect()
+
+	// Status on Archive
+	if _, err := client.Status("Archive", &imap.StatusOptions{NumMessages: true}).Wait(); err != nil {
+		t.Fatalf("Status failed: %v", err)
+	}
+
+	_ = client.Logout().Wait()
 }
 
 

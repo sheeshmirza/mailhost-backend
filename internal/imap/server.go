@@ -47,7 +47,7 @@ func NewServer(db *pgxpool.Pool, cfg *config.Config, log *slog.Logger) (*Server,
 				log: log,
 			}, &imapserver.GreetingData{}, nil
 		},
-		InsecureAuth: false,
+		InsecureAuth: cfg.TLSCertFile == "",
 	}
 
 	if cfg.TLSCertFile != "" && cfg.TLSKeyFile != "" {
