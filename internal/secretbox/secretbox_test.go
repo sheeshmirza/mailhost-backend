@@ -52,5 +52,10 @@ func TestSecretbox(t *testing.T) {
 	if _, err := New(nil); err == nil {
 		t.Fatal("New succeeded with nil key, expected error")
 	}
+
+	// Short ciphertext check
+	if _, err := box.Open([]byte("too-short")); err == nil {
+		t.Fatal("Open succeeded on short ciphertext, expected error")
+	}
 }
 

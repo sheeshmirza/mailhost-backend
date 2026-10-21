@@ -91,7 +91,44 @@ func TestLiveRedisClient(t *testing.T) {
 		t.Fatalf("RemoveSuppression failed: %v", err)
 	}
 
+	// RawClient test
+	if client.RawClient() == nil {
+		t.Fatal("expected RawClient() to be non-nil")
+	}
+
+	// Rate limit <= 0 check
+	if allowed, err := client.AllowRate(ctx, rateKey, 0, time.Second); !allowed || err != nil {
+		t.Fatalf("expected allowed=true for limit<=0, got %v, %v", allowed, err)
+	}
+
+	// Miss check
+	if _, ok, err := client.Get(ctx, "non-existent-key-12345"); ok || err != nil {
+		t.Fatalf("expected miss with nil error, got ok=%v, err=%v", ok, err)
+	}
+
+	// Delete empty keys check
+	if err := client.Delete(ctx); err != nil {
+		t.Fatalf("expected nil error for empty Delete, got %v", err)
+	}
+
 	// Cleanup
 	_ = client.Delete(ctx, key, rateKey, "sups:"+acctID)
+}
+
+func TestRedisNewErrors(t *testing.T) {
+	// Invalid URL scheme
+	if _, err := New("://invalid-url"); err == nil {
+		t.Fatal("expected error for invalid URL, got nil")
+	}
+
+	// Connection failure to closed port
+	if _, err := New("redis://127.0.0.1:54321/0"); err == nil {
+		t.Fatal("expected error for unreachable redis host, got nil")
+	}
+
+	var nilClient *Client
+	if nilClient.RawClient() != nil {
+		t.Fatal("expected nil RawClient for nil client")
+	}
 }
 

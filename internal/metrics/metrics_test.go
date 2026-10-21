@@ -69,3 +69,18 @@ func TestMetricsHandler(t *testing.T) {
 	}
 }
 
+func TestWritePrometheusMalformedKey(t *testing.T) {
+	reg := NewRegistry()
+	reg.mu.Lock()
+	c := &counter{}
+	c.inc()
+	reg.httpRequests["UNKNOWN"] = c
+	reg.mu.Unlock()
+
+	var buf bytes.Buffer
+	reg.WritePrometheus(&buf)
+	if !strings.Contains(buf.String(), `mailhost_http_requests_total{method="UNKNOWN",status="0"} 1`) {
+		t.Errorf("expected malformed key fallback in prometheus output, got:\n%s", buf.String())
+	}
+}
+

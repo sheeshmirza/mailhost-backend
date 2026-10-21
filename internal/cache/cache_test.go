@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -63,6 +64,48 @@ func TestCacheGetOrLoad(t *testing.T) {
 		if res != 42 {
 			t.Errorf("expected result 42, got %d", res)
 		}
+	}
+
+	// Cached hit
+	val, err := c.GetOrLoad("shared-key", func() (int, error) {
+		t.Fatal("loader should not be called on cache hit")
+		return 0, nil
+	})
+	if err != nil || val != 42 {
+		t.Fatalf("expected cached 42, got %d (err=%v)", val, err)
+	}
+}
+
+func TestCacheEviction(t *testing.T) {
+	// Small cache capacity to trigger eviction
+	c := New[int](10*time.Millisecond, 32)
+
+	// Insert items
+	for i := 0; i < 50; i++ {
+		c.Set(string(rune('a'+i)), i)
+	}
+
+	// Wait for expiration and insert more to exercise `now > e.exp` path
+	time.Sleep(20 * time.Millisecond)
+	for i := 50; i < 250; i++ {
+		c.Set(string(rune('a'+i)), i)
+	}
+}
+
+func TestCacheGetOrLoadError(t *testing.T) {
+	c := New[string](time.Hour, 100)
+	expectedErr := errors.New("load-failed")
+
+	_, err := c.GetOrLoad("err-key", func() (string, error) {
+		return "", expectedErr
+	})
+	if err != expectedErr {
+		t.Fatalf("expected %v, got %v", expectedErr, err)
+	}
+
+	// Verify key was not stored
+	if _, ok := c.Get("err-key"); ok {
+		t.Fatal("expected key to not be cached after load error")
 	}
 }
 

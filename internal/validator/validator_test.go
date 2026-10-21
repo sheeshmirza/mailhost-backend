@@ -19,6 +19,10 @@ func TestIsValidEmail(t *testing.T) {
 		{"user@example..com", false},
 		{"user\r\n@example.com", false},
 		{"user@example.com\nBcc: evil@attacker.com", false},
+		{"Name <>", false},
+		{"Name <@domain.com>", false},
+		{"user@@domain.com", false},
+		{"user@domain@extra.com", false},
 		{string(make([]byte, 300)), false},
 	}
 
@@ -136,6 +140,61 @@ func TestIsValidVariableName(t *testing.T) {
 	for _, tt := range tests {
 		if got := IsValidVariableName(tt.name); got != tt.valid {
 			t.Errorf("IsValidVariableName(%q) = %v, want %v", tt.name, got, tt.valid)
+		}
+	}
+}
+
+func TestIsValidTriggerType(t *testing.T) {
+	valid := []string{"event", "contact.created", "email.opened", "email.clicked", " EVENT ", "Contact.Created"}
+	for _, tr := range valid {
+		if !IsValidTriggerType(tr) {
+			t.Errorf("expected %q to be valid trigger type", tr)
+		}
+	}
+
+	invalid := []string{"", "unknown", "custom.trigger", "email.bounced"}
+	for _, tr := range invalid {
+		if IsValidTriggerType(tr) {
+			t.Errorf("expected %q to be invalid trigger type", tr)
+		}
+	}
+}
+
+func TestIsDisposableDomain(t *testing.T) {
+	disposable := []string{"mailinator.com", "guerrillamail.com", "tempmail.com", " YOPMAIL.COM "}
+	for _, d := range disposable {
+		if !IsDisposableDomain(d) {
+			t.Errorf("expected %q to be identified as disposable", d)
+		}
+	}
+
+	legit := []string{"gmail.com", "outlook.com", "corp.mailhost.io", ""}
+	for _, d := range legit {
+		if IsDisposableDomain(d) {
+			t.Errorf("expected %q to NOT be disposable", d)
+		}
+	}
+}
+
+func TestIsRoleBasedEmail(t *testing.T) {
+	roles := []string{
+		"admin@domain.com", "support+urgent@corp.io", "billing@saas.com",
+		"info@agency.org", "postmaster@relay.net", "abuse@network.com",
+		"team@startup.io", "jobs@company.co",
+	}
+	for _, e := range roles {
+		if !IsRoleBasedEmail(e) {
+			t.Errorf("expected %q to be role-based email", e)
+		}
+	}
+
+	nonRoles := []string{
+		"alex@domain.com", "john.doe@company.com", "sarah+admin@corp.io",
+		"invalid-email-without-at", "",
+	}
+	for _, e := range nonRoles {
+		if IsRoleBasedEmail(e) {
+			t.Errorf("expected %q to NOT be role-based email", e)
 		}
 	}
 }

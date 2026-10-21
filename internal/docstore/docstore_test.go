@@ -100,5 +100,26 @@ func TestLiveDocstoreClient(t *testing.T) {
 	if inRetrieved.Subject != inboundDoc.Subject {
 		t.Errorf("expected inbound subject %q, got %q", inboundDoc.Subject, inRetrieved.Subject)
 	}
+
+	// Test non-existent inbound returns (nil, nil)
+	missingIn, err := client.GetInbound(ctx, "non_existent_inbound_id")
+	if err != nil {
+		t.Errorf("expected nil error for missing inbound, got %v", err)
+	}
+	if missingIn != nil {
+		t.Errorf("expected nil for missing inbound, got %+v", missingIn)
+	}
+}
+
+func TestDocstoreNewErrors(t *testing.T) {
+	// Invalid connection URI
+	if _, err := New("://invalid-mongo", "db"); err == nil {
+		t.Fatal("expected error for invalid mongo URI, got nil")
+	}
+
+	// Unreachable host
+	if _, err := New("mongodb://127.0.0.1:54321/?serverSelectionTimeoutMS=200", "db"); err == nil {
+		t.Fatal("expected error for unreachable mongo host, got nil")
+	}
 }
 
