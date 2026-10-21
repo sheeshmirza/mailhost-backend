@@ -114,3 +114,4 @@ func TestSessionRequireAuthAndSelected(t *testing.T) {
 		t.Error("expected requireSelected to return error when unselected")
 	}
 }
+

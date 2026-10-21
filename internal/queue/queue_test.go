@@ -69,3 +69,4 @@ func TestEmptyBatchHandling(t *testing.T) {
 		t.Errorf("expected nil error for empty deltas, got %v", err)
 	}
 }
+

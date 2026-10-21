@@ -116,3 +116,4 @@ func TestMakeResolver(t *testing.T) {
 		t.Error("expected non-nil custom resolver without explicit port")
 	}
 }
+

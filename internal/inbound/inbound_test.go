@@ -111,3 +111,4 @@ func TestNewServerConfig(t *testing.T) {
 		t.Errorf("unexpected server config: addr=%s, domain=%s", s.Addr, s.Domain)
 	}
 }
+
