@@ -374,53 +374,14 @@ func TestPOP3AuthStateAndErrors(t *testing.T) {
 		t.Errorf("expected -ERR already in TLS mode, got: %s", line)
 	}
 
-	// STAT in auth state
-	_ = clientTp.PrintfLine("STAT")
-	line, _ = clientTp.ReadLine()
-	if !strings.HasPrefix(line, "-ERR") {
-		t.Errorf("expected -ERR for STAT in auth state: %s", line)
-	}
-
-	// LIST in auth state
-	_ = clientTp.PrintfLine("LIST")
-	line, _ = clientTp.ReadLine()
-	if !strings.HasPrefix(line, "-ERR") {
-		t.Errorf("expected -ERR for LIST in auth state: %s", line)
-	}
-
-	// UIDL in auth state
-	_ = clientTp.PrintfLine("UIDL")
-	line, _ = clientTp.ReadLine()
-	if !strings.HasPrefix(line, "-ERR") {
-		t.Errorf("expected -ERR for UIDL in auth state: %s", line)
-	}
-
-	// RETR in auth state
-	_ = clientTp.PrintfLine("RETR 1")
-	line, _ = clientTp.ReadLine()
-	if !strings.HasPrefix(line, "-ERR") {
-		t.Errorf("expected -ERR for RETR in auth state: %s", line)
-	}
-
-	// TOP in auth state
-	_ = clientTp.PrintfLine("TOP 1 1")
-	line, _ = clientTp.ReadLine()
-	if !strings.HasPrefix(line, "-ERR") {
-		t.Errorf("expected -ERR for TOP in auth state: %s", line)
-	}
-
-	// DELE in auth state
-	_ = clientTp.PrintfLine("DELE 1")
-	line, _ = clientTp.ReadLine()
-	if !strings.HasPrefix(line, "-ERR") {
-		t.Errorf("expected -ERR for DELE in auth state: %s", line)
-	}
-
-	// RSET in auth state
-	_ = clientTp.PrintfLine("RSET")
-	line, _ = clientTp.ReadLine()
-	if !strings.HasPrefix(line, "-ERR") {
-		t.Errorf("expected -ERR for RSET in auth state: %s", line)
+	// Commands requiring TRANSACTION state must fail in AUTH state
+	invalidInAuth := []string{"STAT", "LIST", "UIDL", "RETR 1", "TOP 1 1", "DELE 1", "RSET"}
+	for _, cmd := range invalidInAuth {
+		_ = clientTp.PrintfLine("%s", cmd)
+		line, _ = clientTp.ReadLine()
+		if !strings.HasPrefix(line, "-ERR") {
+			t.Errorf("expected -ERR for %s in auth state: %s", cmd, line)
+		}
 	}
 
 	// QUIT in auth state
@@ -487,5 +448,21 @@ func TestPOP3ListenAndServe(t *testing.T) {
 		t.Error("timed out waiting for ListenAndServe to exit on Close()")
 	}
 }
+
+func readDotResponse(tp *textproto.Conn) ([]string, error) {
+	var lines []string
+	for {
+		l, err := tp.ReadLine()
+		if err != nil {
+			return lines, err
+		}
+		if strings.TrimSpace(l) == "." {
+			break
+		}
+		lines = append(lines, l)
+	}
+	return lines, nil
+}
+
 
 

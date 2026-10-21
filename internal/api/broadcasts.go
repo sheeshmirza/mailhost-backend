@@ -280,10 +280,8 @@ ORDER BY created_at DESC LIMIT $3`,
 }
 
 func (s *Server) getBroadcast(w http.ResponseWriter, r *http.Request) {
-	idStr := r.PathValue("id")
-	id, err := uuid.Parse(idStr)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid broadcast id")
+	id, ok := pathUUID(w, r, "id")
+	if !ok {
 		return
 	}
 
@@ -349,10 +347,8 @@ func (s *Server) updateBroadcast(w http.ResponseWriter, r *http.Request) {
 	if !requireDeveloperOrAdmin(w, r) {
 		return
 	}
-	idStr := r.PathValue("id")
-	id, err := uuid.Parse(idStr)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid broadcast id")
+	id, ok := pathUUID(w, r, "id")
+	if !ok {
 		return
 	}
 
@@ -420,10 +416,8 @@ func (s *Server) deleteBroadcast(w http.ResponseWriter, r *http.Request) {
 	if !requireDeveloperOrAdmin(w, r) {
 		return
 	}
-	idStr := r.PathValue("id")
-	id, err := uuid.Parse(idStr)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid broadcast id")
+	id, ok := pathUUID(w, r, "id")
+	if !ok {
 		return
 	}
 
@@ -452,10 +446,8 @@ func (s *Server) duplicateBroadcast(w http.ResponseWriter, r *http.Request) {
 	if !requireDeveloperOrAdmin(w, r) {
 		return
 	}
-	idStr := r.PathValue("id")
-	id, err := uuid.Parse(idStr)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid broadcast id")
+	id, ok := pathUUID(w, r, "id")
+	if !ok {
 		return
 	}
 

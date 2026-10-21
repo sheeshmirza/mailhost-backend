@@ -202,10 +202,8 @@ ORDER BY created_at DESC LIMIT $3`,
 }
 
 func (s *Server) getWebhook(w http.ResponseWriter, r *http.Request) {
-	idStr := r.PathValue("id")
-	id, err := uuid.Parse(idStr)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid webhook id")
+	id, ok := pathUUID(w, r, "id")
+	if !ok {
 		return
 	}
 
@@ -214,7 +212,7 @@ func (s *Server) getWebhook(w http.ResponseWriter, r *http.Request) {
 	var events []string
 	var createdAt, updatedAt time.Time
 
-	err = s.rdb.QueryRow(r.Context(), `
+	err := s.rdb.QueryRow(r.Context(), `
 SELECT url, events, status, created_at, updated_at
 FROM webhooks
 WHERE id = $1 AND account_id = $2`,
@@ -243,10 +241,8 @@ func (s *Server) updateWebhook(w http.ResponseWriter, r *http.Request) {
 	if !requireDeveloperOrAdmin(w, r) {
 		return
 	}
-	idStr := r.PathValue("id")
-	id, err := uuid.Parse(idStr)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid webhook id")
+	id, ok := pathUUID(w, r, "id")
+	if !ok {
 		return
 	}
 
@@ -305,10 +301,8 @@ func (s *Server) deleteWebhook(w http.ResponseWriter, r *http.Request) {
 	if !requireDeveloperOrAdmin(w, r) {
 		return
 	}
-	idStr := r.PathValue("id")
-	id, err := uuid.Parse(idStr)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid webhook id")
+	id, ok := pathUUID(w, r, "id")
+	if !ok {
 		return
 	}
 
@@ -469,10 +463,8 @@ func (s *Server) testWebhook(w http.ResponseWriter, r *http.Request) {
 	if !requireDeveloperOrAdmin(w, r) {
 		return
 	}
-	idStr := r.PathValue("id")
-	id, err := uuid.Parse(idStr)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid webhook id")
+	id, ok := pathUUID(w, r, "id")
+	if !ok {
 		return
 	}
 
@@ -548,10 +540,8 @@ func (s *Server) testWebhook(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listWebhookDeliveries(w http.ResponseWriter, r *http.Request) {
-	idStr := r.PathValue("id")
-	id, err := uuid.Parse(idStr)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid webhook id")
+	id, ok := pathUUID(w, r, "id")
+	if !ok {
 		return
 	}
 

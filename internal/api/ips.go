@@ -90,10 +90,8 @@ func (s *Server) updateIPWarmup(w http.ResponseWriter, r *http.Request) {
 	if !requireAdmin(w, r) {
 		return
 	}
-	idStr := r.PathValue("id")
-	id, err := uuid.Parse(idStr)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid ip id")
+	id, ok := pathUUID(w, r, "id")
+	if !ok {
 		return
 	}
 

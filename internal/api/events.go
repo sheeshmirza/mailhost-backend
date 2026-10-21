@@ -150,10 +150,8 @@ ORDER BY created_at DESC LIMIT $3`,
 }
 
 func (s *Server) getEvent(w http.ResponseWriter, r *http.Request) {
-	idStr := r.PathValue("id")
-	id, err := uuid.Parse(idStr)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid event id")
+	id, ok := pathUUID(w, r, "id")
+	if !ok {
 		return
 	}
 

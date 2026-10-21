@@ -901,25 +901,52 @@ func (s *Server) recoverer(next http.Handler) http.Handler {
 	})
 }
 
-func decode(w http.ResponseWriter, r *http.Request, limit int64, v any) bool {
+// ErrBodyTooLarge is returned when request body exceeds maximum allowed size.
+var ErrBodyTooLarge = errors.New("request body too large")
+
+// ErrMultipleJSON is returned when request body contains extraneous data after a single JSON value.
+var ErrMultipleJSON = errors.New("request body must contain exactly one JSON value")
+
+// decodeBoundedJSON decodes one bounded JSON value from r into v, bounded by limit bytes.
+func decodeBoundedJSON(r *http.Request, limit int64, v any) error {
 	if limit <= 0 {
 		limit = 10 << 20
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, limit)
-	dec := json.NewDecoder(r.Body)
+	limited := &io.LimitedReader{R: r.Body, N: limit + 1}
+	dec := json.NewDecoder(limited)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {
-		var mbe *http.MaxBytesError
-		if errors.As(err, &mbe) {
-			writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
-			return false
+		if limited.N == 0 {
+			return ErrBodyTooLarge
 		}
-		writeError(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
-		return false
+		return err
 	}
 	var extra any
 	if err := dec.Decode(&extra); err != io.EOF {
-		writeError(w, http.StatusBadRequest, "request body must contain exactly one JSON value")
+		return ErrMultipleJSON
+	}
+	if limited.N == 0 {
+		return ErrBodyTooLarge
+	}
+	return nil
+}
+
+// decodeJSON decodes one bounded JSON value from r into v with default 10MB limit.
+func decodeJSON(r *http.Request, v any) error {
+	return decodeBoundedJSON(r, 10<<20, v)
+}
+
+func decode(w http.ResponseWriter, r *http.Request, limit int64, v any) bool {
+	if err := decodeBoundedJSON(r, limit, v); err != nil {
+		if errors.Is(err, ErrBodyTooLarge) {
+			writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
+			return false
+		}
+		if errors.Is(err, ErrMultipleJSON) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return false
+		}
+		writeError(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
 		return false
 	}
 	return true
@@ -948,26 +975,6 @@ func (s *Server) internal(w http.ResponseWriter, err error) {
 	writeError(w, http.StatusInternalServerError, "internal error")
 }
 
-// decodeJSON decodes one bounded JSON value from r into v.
-// Returns an error instead of writing to w, for callers that handle errors themselves.
-func decodeJSON(r *http.Request, v any) error {
-	const maxJSONBodyBytes = 10 << 20
-	limited := &io.LimitedReader{R: r.Body, N: maxJSONBodyBytes + 1}
-	dec := json.NewDecoder(limited)
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(v); err != nil {
-		return err
-	}
-	var extra any
-	if err := dec.Decode(&extra); err != io.EOF {
-		return errors.New("request body must contain exactly one JSON value")
-	}
-	if limited.N == 0 {
-		return errors.New("request body too large")
-	}
-	return nil
-}
-
 // audit is a convenience wrapper around auditLog that extracts IP and User-Agent from the request.
 func (s *Server) audit(ctx context.Context, acctID, action, resourceType, resourceID string, r *http.Request) {
 	s.auditLog(ctx, acctID, acctID, action, resourceType, resourceID, clientIP(r), r.UserAgent())
@@ -991,6 +998,17 @@ func pathID(w http.ResponseWriter, r *http.Request) (string, bool) {
 	if !validUUID(id) {
 		writeError(w, http.StatusNotFound, "not found")
 		return "", false
+	}
+	return id, true
+}
+
+// pathUUID extracts a named path parameter, verifies it is a valid UUID, or writes a 400 Bad Request error.
+func pathUUID(w http.ResponseWriter, r *http.Request, param string) (uuid.UUID, bool) {
+	val := r.PathValue(param)
+	id, err := uuid.Parse(val)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid "+param)
+		return uuid.Nil, false
 	}
 	return id, true
 }

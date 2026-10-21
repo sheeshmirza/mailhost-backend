@@ -235,10 +235,8 @@ ORDER BY created_at DESC LIMIT $3`,
 }
 
 func (s *Server) getAutomation(w http.ResponseWriter, r *http.Request) {
-	idStr := r.PathValue("id")
-	id, err := uuid.Parse(idStr)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid automation id")
+	id, ok := pathUUID(w, r, "id")
+	if !ok {
 		return
 	}
 
@@ -282,10 +280,8 @@ func (s *Server) updateAutomation(w http.ResponseWriter, r *http.Request) {
 	if !requireDeveloperOrAdmin(w, r) {
 		return
 	}
-	idStr := r.PathValue("id")
-	id, err := uuid.Parse(idStr)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid automation id")
+	id, ok := pathUUID(w, r, "id")
+	if !ok {
 		return
 	}
 
@@ -381,10 +377,8 @@ func (s *Server) deleteAutomation(w http.ResponseWriter, r *http.Request) {
 	if !requireDeveloperOrAdmin(w, r) {
 		return
 	}
-	idStr := r.PathValue("id")
-	id, err := uuid.Parse(idStr)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid automation id")
+	id, ok := pathUUID(w, r, "id")
+	if !ok {
 		return
 	}
 
@@ -414,10 +408,8 @@ func (s *Server) listAutomationRuns(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	idStr := r.PathValue("id")
-	id, err := uuid.Parse(idStr)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid automation id")
+	id, ok := pathUUID(w, r, "id")
+	if !ok {
 		return
 	}
 

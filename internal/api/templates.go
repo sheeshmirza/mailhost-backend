@@ -35,6 +35,40 @@ type templateReq struct {
 
 var templateAliasRe = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
 
+func validateTemplateReq(req *templateReq) (*string, []byte, error) {
+	var aliasVal *string
+	alias := strings.TrimSpace(req.Alias)
+	if alias != "" {
+		if len(alias) > 50 || !templateAliasRe.MatchString(alias) {
+			return nil, nil, errors.New("alias must contain only alphanumeric characters, dots, underscores, or hyphens and be 50 characters or less")
+		}
+		low := strings.ToLower(alias)
+		aliasVal = &low
+	}
+	if req.Subject != "" && (len(req.Subject) > 998 || strings.ContainsAny(req.Subject, "\r\n")) {
+		return nil, nil, errors.New("subject must be under 998 characters and contain no newlines")
+	}
+	if len(req.Variables) > 100 {
+		return nil, nil, errors.New("variables cannot contain more than 100 items")
+	}
+	for i, variable := range req.Variables {
+		if !validator.IsValidVariableName(variable.Key) || (variable.Type != "string" && variable.Type != "number") || len(variable.FallbackValue) > 10000 {
+			return nil, nil, fmt.Errorf("variables[%d] is invalid", i)
+		}
+	}
+	var varsJSON []byte
+	if req.Variables != nil {
+		var err error
+		varsJSON, err = json.Marshal(req.Variables)
+		if err != nil || len(varsJSON) > 1<<20 {
+			return nil, nil, errors.New("variables cannot exceed 1 MiB")
+		}
+	} else {
+		varsJSON = []byte("[]")
+	}
+	return aliasVal, varsJSON, nil
+}
+
 func (s *Server) createTemplate(w http.ResponseWriter, r *http.Request) {
 	if !requireDeveloperOrAdmin(w, r) {
 		return
@@ -51,37 +85,9 @@ func (s *Server) createTemplate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	alias := strings.TrimSpace(req.Alias)
-	if alias != "" {
-		if len(alias) > 50 || !templateAliasRe.MatchString(alias) {
-			writeError(w, http.StatusUnprocessableEntity, "alias must contain only alphanumeric characters, dots, underscores, or hyphens and be 50 characters or less")
-			return
-		}
-		alias = strings.ToLower(alias)
-	}
-	if req.Subject != "" && (len(req.Subject) > 998 || strings.ContainsAny(req.Subject, "\r\n")) {
-		writeError(w, http.StatusUnprocessableEntity, "subject must be under 998 characters and contain no newlines")
-		return
-	}
-	if len(req.Variables) > 100 {
-		writeError(w, http.StatusUnprocessableEntity, "variables cannot contain more than 100 items")
-		return
-	}
-	for i, variable := range req.Variables {
-		if !validator.IsValidVariableName(variable.Key) || (variable.Type != "string" && variable.Type != "number") || len(variable.FallbackValue) > 10000 {
-			writeError(w, http.StatusUnprocessableEntity, fmt.Sprintf("variables[%d] is invalid", i))
-			return
-		}
-	}
-
-	var aliasVal *string
-	if alias != "" {
-		aliasVal = &alias
-	}
-
-	varsJSON, _ := json.Marshal(req.Variables)
-	if len(varsJSON) > 1<<20 {
-		writeError(w, http.StatusUnprocessableEntity, "variables cannot exceed 1 MiB")
+	aliasVal, varsJSON, err := validateTemplateReq(&req)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
 	if req.Variables == nil {
@@ -197,24 +203,19 @@ func (s *Server) getTemplate(w http.ResponseWriter, r *http.Request) {
 	var publishedAt *time.Time
 	var createdAt, updatedAt time.Time
 
-	var err error
+	query := `
+SELECT id, name, alias, subject, html, text, variables, status,
+       published_subject, published_html, published_text, published_variables, published_at,
+       created_at, updated_at
+FROM templates WHERE alias = $1 AND account_id = $2`
+	var arg any = idOrAlias
 	if parsedUUID, pErr := uuid.Parse(idOrAlias); pErr == nil {
-		err = s.rdb.QueryRow(r.Context(), `
-SELECT id, name, alias, subject, html, text, variables, status,
-       published_subject, published_html, published_text, published_variables, published_at,
-       created_at, updated_at
-FROM templates WHERE id = $1 AND account_id = $2`,
-			parsedUUID, acct).Scan(&id, &name, &alias, &subject, &htmlStr, &textStr, &varsBytes, &status,
-			&pubSubject, &pubHTML, &pubText, &pubVarsBytes, &publishedAt, &createdAt, &updatedAt)
-	} else {
-		err = s.rdb.QueryRow(r.Context(), `
-SELECT id, name, alias, subject, html, text, variables, status,
-       published_subject, published_html, published_text, published_variables, published_at,
-       created_at, updated_at
-FROM templates WHERE alias = $1 AND account_id = $2`,
-			idOrAlias, acct).Scan(&id, &name, &alias, &subject, &htmlStr, &textStr, &varsBytes, &status,
-			&pubSubject, &pubHTML, &pubText, &pubVarsBytes, &publishedAt, &createdAt, &updatedAt)
+		query = strings.Replace(query, "WHERE alias = $1", "WHERE id = $1", 1)
+		arg = parsedUUID
 	}
+	err := s.rdb.QueryRow(r.Context(), query, arg, acct).Scan(
+		&id, &name, &alias, &subject, &htmlStr, &textStr, &varsBytes, &status,
+		&pubSubject, &pubHTML, &pubText, &pubVarsBytes, &publishedAt, &createdAt, &updatedAt)
 
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "template not found")
@@ -277,33 +278,14 @@ func (s *Server) updateTemplate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "name must be at most 100 characters")
 		return
 	}
-	req.Alias = strings.ToLower(strings.TrimSpace(req.Alias))
-	if req.Alias != "" && (len(req.Alias) > 50 || !templateAliasRe.MatchString(req.Alias)) {
-		writeError(w, http.StatusUnprocessableEntity, "alias must contain only alphanumeric characters, dots, underscores, or hyphens and be 50 characters or less")
-		return
-	}
-	if req.Subject != "" && (len(req.Subject) > 998 || strings.ContainsAny(req.Subject, "\r\n")) {
-		writeError(w, http.StatusUnprocessableEntity, "subject must be under 998 characters and contain no newlines")
-		return
-	}
-	if len(req.Variables) > 100 {
-		writeError(w, http.StatusUnprocessableEntity, "variables cannot contain more than 100 items")
-		return
-	}
-	for i, variable := range req.Variables {
-		if !validator.IsValidVariableName(variable.Key) || (variable.Type != "string" && variable.Type != "number") || len(variable.FallbackValue) > 10000 {
-			writeError(w, http.StatusUnprocessableEntity, fmt.Sprintf("variables[%d] is invalid", i))
-			return
-		}
-	}
 
-	var varsJSON []byte
-	if req.Variables != nil {
-		varsJSON, _ = json.Marshal(req.Variables)
-		if len(varsJSON) > 1<<20 {
-			writeError(w, http.StatusUnprocessableEntity, "variables cannot exceed 1 MiB")
-			return
-		}
+	_, varsJSON, err := validateTemplateReq(&req)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	if req.Variables == nil {
+		varsJSON = nil
 	}
 
 	acct := accountID(r)
