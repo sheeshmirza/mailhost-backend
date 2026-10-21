@@ -99,16 +99,14 @@ func (s *Server) listAudiences(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getAudience(w http.ResponseWriter, r *http.Request) {
-	idStr := r.PathValue("id")
-	id, err := uuid.Parse(idStr)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid audience id")
+	id, ok := pathUUID(w, r, "id")
+	if !ok {
 		return
 	}
 
 	var name string
 	var createdAt time.Time
-	err = s.rdb.QueryRow(r.Context(),
+	err := s.rdb.QueryRow(r.Context(),
 		`SELECT name, created_at FROM audiences WHERE id = $1 AND account_id = $2`,
 		id, accountID(r)).Scan(&name, &createdAt)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -132,10 +130,8 @@ func (s *Server) deleteAudience(w http.ResponseWriter, r *http.Request) {
 	if !requireDeveloperOrAdmin(w, r) {
 		return
 	}
-	idStr := r.PathValue("id")
-	id, err := uuid.Parse(idStr)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid audience id")
+	id, ok := pathUUID(w, r, "id")
+	if !ok {
 		return
 	}
 
@@ -276,14 +272,11 @@ func (s *Server) listContacts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	acct := accountID(r)
-	aidStr := r.PathValue("audience_id")
-
 	var rows pgx.Rows
 	var err error
-	if aidStr != "" {
-		aid, pErr := uuid.Parse(aidStr)
-		if pErr != nil {
-			writeError(w, http.StatusBadRequest, "invalid audience_id")
+	if r.PathValue("audience_id") != "" {
+		aid, ok := pathUUID(w, r, "audience_id")
+		if !ok {
 			return
 		}
 		rows, err = s.rdb.Query(r.Context(),
@@ -617,17 +610,15 @@ func (s *Server) listSegments(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getSegment(w http.ResponseWriter, r *http.Request) {
-	idStr := r.PathValue("id")
-	id, err := uuid.Parse(idStr)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid segment id")
+	id, ok := pathUUID(w, r, "id")
+	if !ok {
 		return
 	}
 
 	var name string
 	var filterBytes []byte
 	var createdAt time.Time
-	err = s.rdb.QueryRow(r.Context(),
+	err := s.rdb.QueryRow(r.Context(),
 		`SELECT name, filter, created_at FROM segments WHERE id = $1 AND account_id = $2`,
 		id, accountID(r)).Scan(&name, &filterBytes, &createdAt)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -654,10 +645,8 @@ func (s *Server) updateSegment(w http.ResponseWriter, r *http.Request) {
 	if !requireDeveloperOrAdmin(w, r) {
 		return
 	}
-	idStr := r.PathValue("id")
-	id, err := uuid.Parse(idStr)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid segment id")
+	id, ok := pathUUID(w, r, "id")
+	if !ok {
 		return
 	}
 
@@ -685,7 +674,7 @@ func (s *Server) updateSegment(w http.ResponseWriter, r *http.Request) {
 	var name string
 	var filterBytes []byte
 	var createdAt time.Time
-	err = s.db.QueryRow(r.Context(), `
+	err := s.db.QueryRow(r.Context(), `
 UPDATE segments
 SET name = COALESCE(NULLIF($3, ''), name),
     filter = CASE WHEN $4::jsonb IS NOT NULL AND $4::jsonb <> '{}'::jsonb AND $4::jsonb <> 'null'::jsonb THEN $4::jsonb ELSE filter END
@@ -717,10 +706,8 @@ func (s *Server) deleteSegment(w http.ResponseWriter, r *http.Request) {
 	if !requireDeveloperOrAdmin(w, r) {
 		return
 	}
-	idStr := r.PathValue("id")
-	id, err := uuid.Parse(idStr)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid segment id")
+	id, ok := pathUUID(w, r, "id")
+	if !ok {
 		return
 	}
 
@@ -750,10 +737,8 @@ func (s *Server) listSegmentContacts(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	sidStr := r.PathValue("id")
-	sid, err := uuid.Parse(sidStr)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid segment id")
+	sid, ok := pathUUID(w, r, "id")
+	if !ok {
 		return
 	}
 
@@ -811,23 +796,18 @@ func (s *Server) addContactToSegment(w http.ResponseWriter, r *http.Request) {
 	if !requireDeveloperOrAdmin(w, r) {
 		return
 	}
-	cidStr := r.PathValue("id")
-	sidStr := r.PathValue("segment_id")
-
-	cid, err := uuid.Parse(cidStr)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid contact id")
+	cid, ok := pathUUID(w, r, "id")
+	if !ok {
 		return
 	}
-	sid, err := uuid.Parse(sidStr)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid segment id")
+	sid, ok := pathUUID(w, r, "segment_id")
+	if !ok {
 		return
 	}
 
 	acct := accountID(r)
 	var exists bool
-	err = s.db.QueryRow(r.Context(),
+	err := s.db.QueryRow(r.Context(),
 		`SELECT EXISTS(
 					SELECT 1 FROM contacts c
 					JOIN segments s ON s.account_id = c.account_id
@@ -857,21 +837,16 @@ func (s *Server) removeContactFromSegment(w http.ResponseWriter, r *http.Request
 	if !requireDeveloperOrAdmin(w, r) {
 		return
 	}
-	cidStr := r.PathValue("id")
-	sidStr := r.PathValue("segment_id")
-
-	cid, err := uuid.Parse(cidStr)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid contact id")
+	cid, ok := pathUUID(w, r, "id")
+	if !ok {
 		return
 	}
-	sid, err := uuid.Parse(sidStr)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid segment id")
+	sid, ok := pathUUID(w, r, "segment_id")
+	if !ok {
 		return
 	}
 
-	_, err = s.db.Exec(r.Context(),
+	_, err := s.db.Exec(r.Context(),
 		`DELETE FROM contact_segments cs
 				 WHERE cs.contact_id = $1 AND cs.segment_id = $2
 				 AND EXISTS (SELECT 1 FROM contacts c WHERE c.id = cs.contact_id AND c.account_id = $3)
@@ -894,10 +869,8 @@ func (s *Server) listContactSegments(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	cidStr := r.PathValue("id")
-	cid, err := uuid.Parse(cidStr)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid contact id")
+	cid, ok := pathUUID(w, r, "id")
+	if !ok {
 		return
 	}
 
@@ -1039,16 +1012,14 @@ func (s *Server) listTopics(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getTopic(w http.ResponseWriter, r *http.Request) {
-	idStr := r.PathValue("id")
-	id, err := uuid.Parse(idStr)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid topic id")
+	id, ok := pathUUID(w, r, "id")
+	if !ok {
 		return
 	}
 
 	var name, desc, vis string
 	var createdAt time.Time
-	err = s.rdb.QueryRow(r.Context(),
+	err := s.rdb.QueryRow(r.Context(),
 		`SELECT name, description, visibility, created_at FROM topics WHERE id = $1 AND account_id = $2`,
 		id, accountID(r)).Scan(&name, &desc, &vis, &createdAt)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -1074,10 +1045,8 @@ func (s *Server) updateTopic(w http.ResponseWriter, r *http.Request) {
 	if !requireDeveloperOrAdmin(w, r) {
 		return
 	}
-	idStr := r.PathValue("id")
-	id, err := uuid.Parse(idStr)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid topic id")
+	id, ok := pathUUID(w, r, "id")
+	if !ok {
 		return
 	}
 
@@ -1090,7 +1059,7 @@ func (s *Server) updateTopic(w http.ResponseWriter, r *http.Request) {
 	acct := accountID(r)
 	var name, desc, vis string
 	var createdAt time.Time
-	err = s.db.QueryRow(r.Context(), `
+	err := s.db.QueryRow(r.Context(), `
 UPDATE topics
 SET name = COALESCE(NULLIF($3, ''), name),
     description = COALESCE(NULLIF($4, ''), description),
@@ -1123,10 +1092,8 @@ func (s *Server) deleteTopic(w http.ResponseWriter, r *http.Request) {
 	if !requireDeveloperOrAdmin(w, r) {
 		return
 	}
-	idStr := r.PathValue("id")
-	id, err := uuid.Parse(idStr)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid topic id")
+	id, ok := pathUUID(w, r, "id")
+	if !ok {
 		return
 	}
 
@@ -1159,17 +1126,12 @@ func (s *Server) updateContactTopic(w http.ResponseWriter, r *http.Request) {
 	if !requireDeveloperOrAdmin(w, r) {
 		return
 	}
-	cidStr := r.PathValue("id")
-	tidStr := r.PathValue("topic_id")
-
-	cid, err := uuid.Parse(cidStr)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid contact id")
+	cid, ok := pathUUID(w, r, "id")
+	if !ok {
 		return
 	}
-	tid, err := uuid.Parse(tidStr)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid topic id")
+	tid, ok := pathUUID(w, r, "topic_id")
+	if !ok {
 		return
 	}
 
@@ -1185,7 +1147,7 @@ func (s *Server) updateContactTopic(w http.ResponseWriter, r *http.Request) {
 
 	acct := accountID(r)
 	var exists bool
-	err = s.db.QueryRow(r.Context(),
+	err := s.db.QueryRow(r.Context(),
 		`SELECT EXISTS(
 					SELECT 1 FROM contacts c
 					JOIN topics t ON t.account_id = c.account_id
@@ -1218,21 +1180,16 @@ func (s *Server) removeContactTopic(w http.ResponseWriter, r *http.Request) {
 	if !requireDeveloperOrAdmin(w, r) {
 		return
 	}
-	cidStr := r.PathValue("id")
-	tidStr := r.PathValue("topic_id")
-
-	cid, err := uuid.Parse(cidStr)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid contact id")
+	cid, ok := pathUUID(w, r, "id")
+	if !ok {
 		return
 	}
-	tid, err := uuid.Parse(tidStr)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid topic id")
+	tid, ok := pathUUID(w, r, "topic_id")
+	if !ok {
 		return
 	}
 
-	_, err = s.db.Exec(r.Context(),
+	_, err := s.db.Exec(r.Context(),
 		`DELETE FROM contact_topics ct
 				 WHERE ct.contact_id = $1 AND ct.topic_id = $2
 				 AND EXISTS (SELECT 1 FROM contacts c WHERE c.id = ct.contact_id AND c.account_id = $3)
@@ -1255,10 +1212,8 @@ func (s *Server) listContactTopics(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	cidStr := r.PathValue("id")
-	cid, err := uuid.Parse(cidStr)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid contact id")
+	cid, ok := pathUUID(w, r, "id")
+	if !ok {
 		return
 	}
 

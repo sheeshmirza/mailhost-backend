@@ -478,7 +478,7 @@ func (s *Server) testWebhook(w http.ResponseWriter, r *http.Request) {
 
 	acct := accountID(r)
 	var targetURL, secretText string
-	err = s.rdb.QueryRow(r.Context(),
+	err := s.rdb.QueryRow(r.Context(),
 		`SELECT url, signing_secret FROM webhooks WHERE id = $1 AND account_id = $2`,
 		id, acct).Scan(&targetURL, &secretText)
 	if err != nil {
@@ -547,7 +547,7 @@ func (s *Server) listWebhookDeliveries(w http.ResponseWriter, r *http.Request) {
 
 	acct := accountID(r)
 	var exists bool
-	err = s.rdb.QueryRow(r.Context(), `SELECT true FROM webhooks WHERE id = $1 AND account_id = $2`, id, acct).Scan(&exists)
+	err := s.rdb.QueryRow(r.Context(), `SELECT true FROM webhooks WHERE id = $1 AND account_id = $2`, id, acct).Scan(&exists)
 	if err != nil || !exists {
 		writeError(w, http.StatusNotFound, "webhook not found")
 		return
@@ -606,16 +606,12 @@ func (s *Server) retryWebhookDelivery(w http.ResponseWriter, r *http.Request) {
 	if !requireDeveloperOrAdmin(w, r) {
 		return
 	}
-	wIDStr := r.PathValue("id")
-	wID, err := uuid.Parse(wIDStr)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid webhook id")
+	wID, ok := pathUUID(w, r, "id")
+	if !ok {
 		return
 	}
-	dIDStr := r.PathValue("delivery_id")
-	dID, err := uuid.Parse(dIDStr)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid delivery id")
+	dID, ok := pathUUID(w, r, "delivery_id")
+	if !ok {
 		return
 	}
 

@@ -160,7 +160,7 @@ func (s *Server) getEvent(w http.ResponseWriter, r *http.Request) {
 	var dataBytes []byte
 	var createdAt time.Time
 
-	err = s.rdb.QueryRow(r.Context(), `
+	err := s.rdb.QueryRow(r.Context(), `
 SELECT name, contact_email, data, created_at
 FROM custom_events
 WHERE id = $1 AND account_id = $2`,

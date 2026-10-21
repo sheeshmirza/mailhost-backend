@@ -98,7 +98,7 @@ func (s *Server) createTemplate(w http.ResponseWriter, r *http.Request) {
 	var id uuid.UUID
 	var createdAt, updatedAt time.Time
 
-	err := s.db.QueryRow(r.Context(), `
+	err = s.db.QueryRow(r.Context(), `
 INSERT INTO templates (account_id, name, alias, subject, html, text, variables, status, updated_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7, 'draft', now())
 RETURNING id, created_at, updated_at`,
@@ -260,10 +260,8 @@ func (s *Server) updateTemplate(w http.ResponseWriter, r *http.Request) {
 	if !requireDeveloperOrAdmin(w, r) {
 		return
 	}
-	idStr := r.PathValue("id")
-	id, err := uuid.Parse(idStr)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid template id")
+	id, ok := pathUUID(w, r, "id")
+	if !ok {
 		return
 	}
 
@@ -343,10 +341,8 @@ func (s *Server) publishTemplate(w http.ResponseWriter, r *http.Request) {
 	if !requireDeveloperOrAdmin(w, r) {
 		return
 	}
-	idStr := r.PathValue("id")
-	id, err := uuid.Parse(idStr)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid template id")
+	id, ok := pathUUID(w, r, "id")
+	if !ok {
 		return
 	}
 
@@ -356,7 +352,7 @@ func (s *Server) publishTemplate(w http.ResponseWriter, r *http.Request) {
 	var pubVarsBytes []byte
 	var pubAt time.Time
 
-	err = s.db.QueryRow(r.Context(), `
+	err := s.db.QueryRow(r.Context(), `
 UPDATE templates
 SET status = 'published',
     published_subject = subject,
@@ -414,10 +410,8 @@ func (s *Server) listTemplateVersions(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	idStr := r.PathValue("id")
-	id, err := uuid.Parse(idStr)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid template id")
+	id, ok := pathUUID(w, r, "id")
+	if !ok {
 		return
 	}
 
@@ -472,10 +466,8 @@ func (s *Server) rollbackTemplate(w http.ResponseWriter, r *http.Request) {
 	if !requireDeveloperOrAdmin(w, r) {
 		return
 	}
-	idStr := r.PathValue("id")
-	id, err := uuid.Parse(idStr)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid template id")
+	id, ok := pathUUID(w, r, "id")
+	if !ok {
 		return
 	}
 	versionStr := r.PathValue("version")
@@ -540,10 +532,8 @@ func (s *Server) deleteTemplate(w http.ResponseWriter, r *http.Request) {
 	if !requireDeveloperOrAdmin(w, r) {
 		return
 	}
-	idStr := r.PathValue("id")
-	id, err := uuid.Parse(idStr)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid template id")
+	id, ok := pathUUID(w, r, "id")
+	if !ok {
 		return
 	}
 
@@ -649,10 +639,8 @@ type templateTestSendReq struct {
 }
 
 func (s *Server) previewTemplate(w http.ResponseWriter, r *http.Request) {
-	idStr := r.PathValue("id")
-	id, err := uuid.Parse(idStr)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid template id")
+	id, ok := pathUUID(w, r, "id")
+	if !ok {
 		return
 	}
 
@@ -665,7 +653,7 @@ func (s *Server) previewTemplate(w http.ResponseWriter, r *http.Request) {
 	acct := accountID(r)
 	var name, subject, htmlContent, textContent string
 	var publishedHTML, publishedText, publishedSubject *string
-	err = s.rdb.QueryRow(r.Context(), `
+	err := s.rdb.QueryRow(r.Context(), `
 SELECT name, subject, html, text, published_html, published_text, published_subject
 FROM templates WHERE id = $1 AND account_id = $2`, id, acct).Scan(&name, &subject, &htmlContent, &textContent, &publishedHTML, &publishedText, &publishedSubject)
 	if err != nil {
@@ -707,10 +695,8 @@ func (s *Server) testSendTemplate(w http.ResponseWriter, r *http.Request) {
 	if !requireDeveloperOrAdmin(w, r) {
 		return
 	}
-	idStr := r.PathValue("id")
-	id, err := uuid.Parse(idStr)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid template id")
+	id, ok := pathUUID(w, r, "id")
+	if !ok {
 		return
 	}
 
@@ -729,7 +715,7 @@ func (s *Server) testSendTemplate(w http.ResponseWriter, r *http.Request) {
 	acct := accountID(r)
 	var name, subject, htmlContent, textContent string
 	var publishedHTML, publishedText, publishedSubject *string
-	err = s.rdb.QueryRow(r.Context(), `
+	err := s.rdb.QueryRow(r.Context(), `
 SELECT name, subject, html, text, published_html, published_text, published_subject
 FROM templates WHERE id = $1 AND account_id = $2`, id, acct).Scan(&name, &subject, &htmlContent, &textContent, &publishedHTML, &publishedText, &publishedSubject)
 	if err != nil {

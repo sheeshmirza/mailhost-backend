@@ -293,7 +293,7 @@ func (s *Server) getBroadcast(w http.ResponseWriter, r *http.Request) {
 	var rcptCount, sentCount int
 	var createdAt, updatedAt time.Time
 
-	err = s.rdb.QueryRow(r.Context(), `
+	err := s.rdb.QueryRow(r.Context(), `
 SELECT id, segment_id, audience_id, topic_id, name, from_addr, subject, reply_to, preview_text,
        html, text, status, scheduled_at, sent_at, recipients_count, sent_count, created_at, updated_at
 FROM broadcasts
@@ -456,7 +456,7 @@ func (s *Server) duplicateBroadcast(w http.ResponseWriter, r *http.Request) {
 	var name string
 	var createdAt time.Time
 
-	err = s.db.QueryRow(r.Context(), `
+	err := s.db.QueryRow(r.Context(), `
 INSERT INTO broadcasts (account_id, segment_id, audience_id, topic_id, name, from_addr, subject, reply_to, preview_text, html, text, status)
 SELECT account_id, segment_id, audience_id, topic_id, name || ' (Copy)', from_addr, subject, reply_to, preview_text, html, text, 'draft'
 FROM broadcasts
@@ -617,10 +617,8 @@ func (s *Server) sendBroadcast(w http.ResponseWriter, r *http.Request) {
 	if !requireSender(w, r) {
 		return
 	}
-	idStr := r.PathValue("id")
-	id, err := uuid.Parse(idStr)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid broadcast id")
+	id, ok := pathUUID(w, r, "id")
+	if !ok {
 		return
 	}
 

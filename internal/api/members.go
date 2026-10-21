@@ -129,7 +129,7 @@ func (s *Server) removeMember(w http.ResponseWriter, r *http.Request) {
 	acct := accountID(r)
 
 	var targetRole string
-	err = s.db.QueryRow(r.Context(), `SELECT role FROM organization_members WHERE id = $1 AND account_id = $2`, id, acct).Scan(&targetRole)
+	err := s.db.QueryRow(r.Context(), `SELECT role FROM organization_members WHERE id = $1 AND account_id = $2`, id, acct).Scan(&targetRole)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "member not found")
 		return

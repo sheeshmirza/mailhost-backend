@@ -4,8 +4,6 @@ import (
 	"net/http"
 	"strings"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 type dedicatedIPView struct {

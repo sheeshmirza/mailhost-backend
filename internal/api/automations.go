@@ -245,7 +245,7 @@ func (s *Server) getAutomation(w http.ResponseWriter, r *http.Request) {
 	var trigBytes, stepsBytes []byte
 	var createdAt, updatedAt time.Time
 
-	err = s.rdb.QueryRow(r.Context(), `
+	err := s.rdb.QueryRow(r.Context(), `
 SELECT name, status, trigger_type, trigger_config, steps, created_at, updated_at
 FROM automations
 WHERE id = $1 AND account_id = $2`,
@@ -467,10 +467,8 @@ ORDER BY created_at DESC LIMIT $4`,
 }
 
 func (s *Server) getAutomationRun(w http.ResponseWriter, r *http.Request) {
-	runIDStr := r.PathValue("run_id")
-	runID, err := uuid.Parse(runIDStr)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid run id")
+	runID, ok := pathUUID(w, r, "run_id")
+	if !ok {
 		return
 	}
 
@@ -481,7 +479,7 @@ func (s *Server) getAutomationRun(w http.ResponseWriter, r *http.Request) {
 	var dataBytes, resultsBytes []byte
 	var createdAt, updatedAt time.Time
 
-	err = s.rdb.QueryRow(r.Context(), `
+	err := s.rdb.QueryRow(r.Context(), `
 SELECT automation_id, contact_email, event_name, event_data, status, current_step_index, step_results, created_at, updated_at
 FROM automation_runs
 WHERE id = $1 AND account_id = $2`,
