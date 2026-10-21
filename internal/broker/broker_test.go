@@ -45,11 +45,11 @@ func TestLiveRabbitMQClient(t *testing.T) {
 	defer cancel()
 
 	msg := DeliveryMessage{
-		DeliveryID: "dlv_test_123",
-		AccountID:  "acct_test",
-		DomainID:   "dom_test",
+		DeliveryID: "00000000-0000-0000-0000-000000000001",
+		AccountID:  "00000000-0000-0000-0000-000000000002",
+		DomainID:   "00000000-0000-0000-0000-000000000003",
 		DomainName: "test.example.com",
-		EmailID:    "email_test",
+		EmailID:    "00000000-0000-0000-0000-000000000004",
 		Recipient:  "user@remote.com",
 		Priority:   0,
 		Attempts:   1,

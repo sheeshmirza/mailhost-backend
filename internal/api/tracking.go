@@ -245,7 +245,7 @@ FROM deliveries d JOIN (`+trackingTargetSQL+`) target ON target.id = d.id`, deli
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to query delivery")
+		s.internal(w, err)
 		return
 	}
 

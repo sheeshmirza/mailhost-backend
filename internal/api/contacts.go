@@ -44,8 +44,7 @@ func (s *Server) createAudience(w http.ResponseWriter, r *http.Request) {
 		`INSERT INTO audiences (account_id, name) VALUES ($1, $2) RETURNING id, created_at`,
 		acct, name).Scan(&id, &createdAt)
 	if err != nil {
-		s.log.Error("create audience failed", "err", err)
-		writeError(w, http.StatusInternalServerError, "failed to create audience")
+		s.internal(w, err)
 		return
 	}
 
@@ -68,8 +67,7 @@ func (s *Server) listAudiences(w http.ResponseWriter, r *http.Request) {
 		`SELECT id, name, created_at FROM audiences WHERE account_id = $1 AND created_at < $2 ORDER BY created_at DESC LIMIT $3`,
 		acct, before, limit)
 	if err != nil {
-		s.log.Error("list audiences failed", "err", err)
-		writeError(w, http.StatusInternalServerError, "failed to list audiences")
+		s.internal(w, err)
 		return
 	}
 	defer rows.Close()
@@ -80,7 +78,7 @@ func (s *Server) listAudiences(w http.ResponseWriter, r *http.Request) {
 		var name string
 		var createdAt time.Time
 		if err := rows.Scan(&id, &name, &createdAt); err != nil {
-			writeError(w, http.StatusInternalServerError, "scan failed")
+			s.internal(w, err)
 			return
 		}
 		data = append(data, map[string]any{
@@ -118,7 +116,7 @@ func (s *Server) getAudience(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "query failed")
+		s.internal(w, err)
 		return
 	}
 
@@ -146,7 +144,7 @@ func (s *Server) deleteAudience(w http.ResponseWriter, r *http.Request) {
 		`DELETE FROM audiences WHERE id = $1 AND account_id = $2`,
 		id, acct)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "delete failed")
+		s.internal(w, err)
 		return
 	}
 	if tag.RowsAffected() == 0 {
@@ -251,8 +249,7 @@ RETURNING id, created_at, updated_at, unsubscribed`,
 		acct, audienceID, email, strings.TrimSpace(req.FirstName), strings.TrimSpace(req.LastName), unsub, req.Unsubscribed != nil, traitsJSON).
 		Scan(&contactID, &createdAt, &updatedAt, &unsub)
 	if err != nil {
-		s.log.Error("upsert contact failed", "err", err)
-		writeError(w, http.StatusInternalServerError, "failed to save contact")
+		s.internal(w, err)
 		return
 	}
 
@@ -300,8 +297,7 @@ FROM contacts WHERE account_id = $1 AND created_at < $2 ORDER BY created_at DESC
 			acct, before, limit)
 	}
 	if err != nil {
-		s.log.Error("list contacts failed", "err", err)
-		writeError(w, http.StatusInternalServerError, "failed to list contacts")
+		s.internal(w, err)
 		return
 	}
 	defer rows.Close()
@@ -314,7 +310,7 @@ FROM contacts WHERE account_id = $1 AND created_at < $2 ORDER BY created_at DESC
 		var traitsBytes []byte
 		var createdAt, updatedAt time.Time
 		if err := rows.Scan(&id, &email, &fn, &ln, &unsub, &traitsBytes, &createdAt, &updatedAt); err != nil {
-			writeError(w, http.StatusInternalServerError, "scan failed")
+			s.internal(w, err)
 			return
 		}
 		var traits map[string]any
@@ -369,7 +365,7 @@ func (s *Server) getContact(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "query failed")
+		s.internal(w, err)
 		return
 	}
 
@@ -432,7 +428,7 @@ func (s *Server) updateContact(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "lookup failed")
+			s.internal(w, err)
 			return
 		}
 	}
@@ -459,8 +455,7 @@ RETURNING id, email, first_name, last_name, unsubscribed, traits, created_at, up
 		return
 	}
 	if err != nil {
-		s.log.Error("update contact failed", "err", err)
-		writeError(w, http.StatusInternalServerError, "update failed")
+		s.internal(w, err)
 		return
 	}
 
@@ -512,7 +507,7 @@ func (s *Server) deleteContact(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "delete failed")
+		s.internal(w, err)
 		return
 	}
 
@@ -562,8 +557,7 @@ func (s *Server) createSegment(w http.ResponseWriter, r *http.Request) {
 		`INSERT INTO segments (account_id, name, filter) VALUES ($1, $2, $3) RETURNING id, created_at`,
 		acct, name, filterJSON).Scan(&id, &createdAt)
 	if err != nil {
-		s.log.Error("create segment failed", "err", err)
-		writeError(w, http.StatusInternalServerError, "failed to create segment")
+		s.internal(w, err)
 		return
 	}
 
@@ -587,8 +581,7 @@ func (s *Server) listSegments(w http.ResponseWriter, r *http.Request) {
 		`SELECT id, name, filter, created_at FROM segments WHERE account_id = $1 AND created_at < $2 ORDER BY created_at DESC LIMIT $3`,
 		acct, before, limit)
 	if err != nil {
-		s.log.Error("list segments failed", "err", err)
-		writeError(w, http.StatusInternalServerError, "failed to list segments")
+		s.internal(w, err)
 		return
 	}
 	defer rows.Close()
@@ -600,7 +593,7 @@ func (s *Server) listSegments(w http.ResponseWriter, r *http.Request) {
 		var filterBytes []byte
 		var createdAt time.Time
 		if err := rows.Scan(&id, &name, &filterBytes, &createdAt); err != nil {
-			writeError(w, http.StatusInternalServerError, "scan failed")
+			s.internal(w, err)
 			return
 		}
 		var filter map[string]any
@@ -642,7 +635,7 @@ func (s *Server) getSegment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "query failed")
+		s.internal(w, err)
 		return
 	}
 
@@ -704,7 +697,7 @@ RETURNING name, filter, created_at`,
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "update failed")
+		s.internal(w, err)
 		return
 	}
 
@@ -736,7 +729,7 @@ func (s *Server) deleteSegment(w http.ResponseWriter, r *http.Request) {
 		`DELETE FROM segments WHERE id = $1 AND account_id = $2`,
 		id, acct)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "delete failed")
+		s.internal(w, err)
 		return
 	}
 	if tag.RowsAffected() == 0 {
@@ -773,7 +766,7 @@ WHERE cs.segment_id = $1 AND c.account_id = $2 AND c.created_at < $3
 ORDER BY c.created_at DESC LIMIT $4`,
 		sid, acct, before, limit)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "query failed")
+		s.internal(w, err)
 		return
 	}
 	defer rows.Close()
@@ -786,7 +779,7 @@ ORDER BY c.created_at DESC LIMIT $4`,
 		var traitsBytes []byte
 		var createdAt, updatedAt time.Time
 		if err := rows.Scan(&id, &email, &fn, &ln, &unsub, &traitsBytes, &createdAt, &updatedAt); err != nil {
-			writeError(w, http.StatusInternalServerError, "scan failed")
+			s.internal(w, err)
 			return
 		}
 		var traits map[string]any
@@ -849,7 +842,7 @@ func (s *Server) addContactToSegment(w http.ResponseWriter, r *http.Request) {
 		`INSERT INTO contact_segments (contact_id, segment_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
 		cid, sid)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to add contact to segment")
+		s.internal(w, err)
 		return
 	}
 
@@ -885,7 +878,7 @@ func (s *Server) removeContactFromSegment(w http.ResponseWriter, r *http.Request
 				 AND EXISTS (SELECT 1 FROM segments s WHERE s.id = cs.segment_id AND s.account_id = $3)`,
 		cid, sid, accountID(r))
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "delete failed")
+		s.internal(w, err)
 		return
 	}
 
@@ -917,7 +910,7 @@ WHERE cs.contact_id = $1 AND s.account_id = $2 AND s.created_at < $3
 ORDER BY s.created_at DESC LIMIT $4`,
 		cid, acct, before, limit)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "query failed")
+		s.internal(w, err)
 		return
 	}
 	defer rows.Close()
@@ -929,7 +922,7 @@ ORDER BY s.created_at DESC LIMIT $4`,
 		var filterBytes []byte
 		var createdAt time.Time
 		if err := rows.Scan(&id, &name, &filterBytes, &createdAt); err != nil {
-			writeError(w, http.StatusInternalServerError, "scan failed")
+			s.internal(w, err)
 			return
 		}
 		var filter map[string]any
@@ -987,8 +980,7 @@ func (s *Server) createTopic(w http.ResponseWriter, r *http.Request) {
 		`INSERT INTO topics (account_id, name, description, visibility) VALUES ($1, $2, $3, $4) RETURNING id, created_at`,
 		acct, name, strings.TrimSpace(req.Description), vis).Scan(&id, &createdAt)
 	if err != nil {
-		s.log.Error("create topic failed", "err", err)
-		writeError(w, http.StatusInternalServerError, "failed to create topic")
+		s.internal(w, err)
 		return
 	}
 
@@ -1013,8 +1005,7 @@ func (s *Server) listTopics(w http.ResponseWriter, r *http.Request) {
 		`SELECT id, name, description, visibility, created_at FROM topics WHERE account_id = $1 AND created_at < $2 ORDER BY created_at DESC LIMIT $3`,
 		acct, before, limit)
 	if err != nil {
-		s.log.Error("list topics failed", "err", err)
-		writeError(w, http.StatusInternalServerError, "failed to list topics")
+		s.internal(w, err)
 		return
 	}
 	defer rows.Close()
@@ -1025,7 +1016,7 @@ func (s *Server) listTopics(w http.ResponseWriter, r *http.Request) {
 		var name, desc, vis string
 		var createdAt time.Time
 		if err := rows.Scan(&id, &name, &desc, &vis, &createdAt); err != nil {
-			writeError(w, http.StatusInternalServerError, "scan failed")
+			s.internal(w, err)
 			return
 		}
 		data = append(data, map[string]any{
@@ -1065,7 +1056,7 @@ func (s *Server) getTopic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "query failed")
+		s.internal(w, err)
 		return
 	}
 
@@ -1113,7 +1104,7 @@ RETURNING name, description, visibility, created_at`,
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "update failed")
+		s.internal(w, err)
 		return
 	}
 
@@ -1144,7 +1135,7 @@ func (s *Server) deleteTopic(w http.ResponseWriter, r *http.Request) {
 		`DELETE FROM topics WHERE id = $1 AND account_id = $2`,
 		id, acct)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "delete failed")
+		s.internal(w, err)
 		return
 	}
 	if tag.RowsAffected() == 0 {
@@ -1212,7 +1203,7 @@ ON CONFLICT (contact_id, topic_id)
 DO UPDATE SET status = EXCLUDED.status`,
 		cid, tid, status)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to update topic subscription")
+		s.internal(w, err)
 		return
 	}
 
@@ -1248,7 +1239,7 @@ func (s *Server) removeContactTopic(w http.ResponseWriter, r *http.Request) {
 				 AND EXISTS (SELECT 1 FROM topics t WHERE t.id = ct.topic_id AND t.account_id = $3)`,
 		cid, tid, accountID(r))
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "delete failed")
+		s.internal(w, err)
 		return
 	}
 
@@ -1280,7 +1271,7 @@ WHERE t.account_id = $2 AND t.created_at < $3
 ORDER BY t.created_at DESC LIMIT $4`,
 		cid, acct, before, limit)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "query failed")
+		s.internal(w, err)
 		return
 	}
 	defer rows.Close()
@@ -1291,7 +1282,7 @@ ORDER BY t.created_at DESC LIMIT $4`,
 		var name, desc, vis, status string
 		var createdAt time.Time
 		if err := rows.Scan(&id, &name, &desc, &vis, &status, &createdAt); err != nil {
-			writeError(w, http.StatusInternalServerError, "scan failed")
+			s.internal(w, err)
 			return
 		}
 		data = append(data, map[string]any{
@@ -1515,9 +1506,10 @@ RETURNING (xmax = 0) AS is_insert`,
 			acct, parsedAudUUID, cleanEmail, strings.TrimSpace(item.FirstName), strings.TrimSpace(item.LastName), item.Unsubscribed, traitsJSON).Scan(&isInsert)
 
 		if err != nil {
+			s.log.Error("import contact db error", "email", cleanEmail, "err", err)
 			resp.Invalid++
 			if len(resp.Errors) < 10 {
-				resp.Errors = append(resp.Errors, "database error for "+cleanEmail+": "+err.Error())
+				resp.Errors = append(resp.Errors, "failed to save contact: "+cleanEmail)
 			}
 			continue
 		}

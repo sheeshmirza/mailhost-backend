@@ -61,7 +61,7 @@ func (s *Server) createAPIKey(w http.ResponseWriter, r *http.Request) {
 			`SELECT EXISTS(SELECT 1 FROM domains WHERE id = $1::uuid AND account_id = $2)`,
 			*req.DomainID, acct).Scan(&exists)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to validate domain_id")
+			s.internal(w, err)
 			return
 		}
 		if !exists {

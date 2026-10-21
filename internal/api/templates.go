@@ -103,8 +103,7 @@ RETURNING id, created_at, updated_at`,
 		return
 	}
 	if err != nil {
-		s.log.Error("create template failed", "err", err)
-		writeError(w, http.StatusInternalServerError, "failed to create template")
+		s.internal(w, err)
 		return
 	}
 
@@ -137,8 +136,7 @@ WHERE account_id = $1 AND created_at < $2
 ORDER BY created_at DESC LIMIT $3`,
 		acct, before, limit)
 	if err != nil {
-		s.log.Error("list templates failed", "err", err)
-		writeError(w, http.StatusInternalServerError, "failed to list templates")
+		s.internal(w, err)
 		return
 	}
 	defer rows.Close()
@@ -153,7 +151,7 @@ ORDER BY created_at DESC LIMIT $3`,
 		var createdAt, updatedAt time.Time
 
 		if err := rows.Scan(&id, &name, &alias, &subject, &status, &varsBytes, &publishedAt, &createdAt, &updatedAt); err != nil {
-			writeError(w, http.StatusInternalServerError, "scan failed")
+			s.internal(w, err)
 			return
 		}
 
@@ -223,7 +221,7 @@ FROM templates WHERE alias = $1 AND account_id = $2`,
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "query failed")
+		s.internal(w, err)
 		return
 	}
 
@@ -336,7 +334,7 @@ RETURNING id, name, alias, subject, html, text, variables, status, created_at, u
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "update failed")
+		s.internal(w, err)
 		return
 	}
 
@@ -394,7 +392,7 @@ RETURNING name, alias, published_subject, published_html, published_text, publis
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "publish failed")
+		s.internal(w, err)
 		return
 	}
 
@@ -412,7 +410,7 @@ RETURNING version_number`,
 			writeError(w, http.StatusConflict, "template was published concurrently; please retry")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "failed to create template version")
+		s.internal(w, err)
 		return
 	}
 
@@ -449,7 +447,7 @@ WHERE template_id = $1 AND account_id = $2 AND created_at < $3
 ORDER BY version_number DESC LIMIT $4`,
 		id, acct, before, limit)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to query versions")
+		s.internal(w, err)
 		return
 	}
 	defer rows.Close()
@@ -528,7 +526,7 @@ WHERE version_number = $1 AND template_id = $2 AND account_id = $3`,
 		return
 	}
 	if queryErr != nil {
-		writeError(w, http.StatusInternalServerError, "lookup failed")
+		s.internal(w, queryErr)
 		return
 	}
 
@@ -537,8 +535,12 @@ UPDATE templates
 SET subject = $3, html = $4, text = $5, variables = $6, updated_at = now()
 WHERE id = $1 AND account_id = $2`,
 		id, acct, sub, htmlStr, textStr, varsBytes)
-	if err != nil || tag.RowsAffected() == 0 {
-		writeError(w, http.StatusInternalServerError, "rollback update failed")
+	if err != nil {
+		s.internal(w, err)
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		writeError(w, http.StatusNotFound, "template not found")
 		return
 	}
 
@@ -568,7 +570,7 @@ func (s *Server) deleteTemplate(w http.ResponseWriter, r *http.Request) {
 		`DELETE FROM templates WHERE id = $1 AND account_id = $2`,
 		id, acct)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "delete failed")
+		s.internal(w, err)
 		return
 	}
 	if tag.RowsAffected() == 0 {
@@ -689,7 +691,7 @@ FROM templates WHERE id = $1 AND account_id = $2`, id, acct).Scan(&name, &subjec
 			writeError(w, http.StatusNotFound, "template not found")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "database error")
+		s.internal(w, err)
 		return
 	}
 
@@ -753,7 +755,7 @@ FROM templates WHERE id = $1 AND account_id = $2`, id, acct).Scan(&name, &subjec
 			writeError(w, http.StatusNotFound, "template not found")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "database error")
+		s.internal(w, err)
 		return
 	}
 
@@ -820,7 +822,7 @@ FROM templates WHERE id = $1 AND account_id = $2`, id, acct).Scan(&name, &subjec
 	}
 	body, err := s.enqueueRequest(r, []queue.Email{e}, emailReq, response)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to enqueue test email: "+err.Error())
+		s.internal(w, err)
 		return
 	}
 

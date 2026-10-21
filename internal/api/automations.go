@@ -132,7 +132,7 @@ func (s *Server) createAutomation(w http.ResponseWriter, r *http.Request) {
 	acct := accountID(r)
 	if froms := collectAutomationFroms(req.Steps); len(froms) > 0 {
 		if err := s.ValidateFromAddresses(r.Context(), acct, froms); err != nil {
-			writeFromError(w, err)
+			s.writeFromError(w, err)
 			return
 		}
 	}
@@ -160,8 +160,7 @@ RETURNING id, created_at, updated_at`,
 		acct, name, status, trigType, trigJSON, stepsJSON).
 		Scan(&id, &createdAt, &updatedAt)
 	if err != nil {
-		s.log.Error("create automation failed", "err", err)
-		writeError(w, http.StatusInternalServerError, "failed to create automation")
+		s.internal(w, err)
 		return
 	}
 
@@ -191,8 +190,7 @@ WHERE account_id = $1 AND created_at < $2
 ORDER BY created_at DESC LIMIT $3`,
 		acct, before, limit)
 	if err != nil {
-		s.log.Error("list automations failed", "err", err)
-		writeError(w, http.StatusInternalServerError, "failed to list automations")
+		s.internal(w, err)
 		return
 	}
 	defer rows.Close()
@@ -205,7 +203,7 @@ ORDER BY created_at DESC LIMIT $3`,
 		var createdAt, updatedAt time.Time
 
 		if err := rows.Scan(&id, &name, &status, &trigType, &trigBytes, &stepsBytes, &createdAt, &updatedAt); err != nil {
-			writeError(w, http.StatusInternalServerError, "scan failed")
+			s.internal(w, err)
 			return
 		}
 
@@ -259,7 +257,7 @@ WHERE id = $1 AND account_id = $2`,
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "query failed")
+		s.internal(w, err)
 		return
 	}
 
@@ -347,7 +345,7 @@ func (s *Server) updateAutomation(w http.ResponseWriter, r *http.Request) {
 	if req.Steps != nil {
 		if froms := collectAutomationFroms(req.Steps); len(froms) > 0 {
 			if err := s.ValidateFromAddresses(r.Context(), acct, froms); err != nil {
-				writeFromError(w, err)
+				s.writeFromError(w, err)
 				return
 			}
 		}
@@ -363,7 +361,7 @@ SET name = COALESCE(NULLIF($3, ''), name),
 WHERE id = $1 AND account_id = $2`,
 		id, acct, req.Name, req.Status, req.Trigger.Type, trigJSON, stepsJSON)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "update failed")
+		s.internal(w, err)
 		return
 	}
 	if tag.RowsAffected() == 0 {
@@ -395,7 +393,7 @@ func (s *Server) deleteAutomation(w http.ResponseWriter, r *http.Request) {
 		`DELETE FROM automations WHERE id = $1 AND account_id = $2`,
 		id, acct)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "delete failed")
+		s.internal(w, err)
 		return
 	}
 	if tag.RowsAffected() == 0 {
@@ -431,7 +429,7 @@ WHERE automation_id = $1 AND account_id = $2 AND created_at < $3
 ORDER BY created_at DESC LIMIT $4`,
 		id, acct, before, limit)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "query failed")
+		s.internal(w, err)
 		return
 	}
 	defer rows.Close()
@@ -445,7 +443,7 @@ ORDER BY created_at DESC LIMIT $4`,
 		var createdAt, updatedAt time.Time
 
 		if err := rows.Scan(&runID, &email, &evName, &status, &stepIdx, &resultsBytes, &createdAt, &updatedAt); err != nil {
-			writeError(w, http.StatusInternalServerError, "scan failed")
+			s.internal(w, err)
 			return
 		}
 
@@ -501,7 +499,7 @@ WHERE id = $1 AND account_id = $2`,
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "query failed")
+		s.internal(w, err)
 		return
 	}
 

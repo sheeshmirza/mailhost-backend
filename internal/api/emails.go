@@ -170,14 +170,14 @@ func (s *Server) ValidateFromAddresses(ctx context.Context, accountID string, fr
 }
 
 // writeFromError writes a 422 response for a domain-validation error returned by ValidateFromAddress(es).
-// It unwraps validationError messages so they reach the caller verbatim, and falls through to a 500 for
+// It unwraps validationError messages so they reach the caller verbatim, and falls through to s.internal for
 // unexpected database errors.
-func writeFromError(w http.ResponseWriter, err error) {
+func (s *Server) writeFromError(w http.ResponseWriter, err error) {
 	var ve validationError
 	if errors.As(err, &ve) {
 		writeError(w, http.StatusUnprocessableEntity, ve.msg)
 	} else {
-		writeError(w, http.StatusInternalServerError, "failed to validate sender domain")
+		s.internal(w, err)
 	}
 }
 
@@ -945,7 +945,7 @@ SET status = 'cancelled', updated_at = now()
 WHERE email_id = $1 AND account_id = $2 AND status IN ('scheduled', 'queued', 'deferred')`,
 		id, acct)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "cancel failed")
+		s.internal(w, err)
 		return
 	}
 	if tag.RowsAffected() == 0 {

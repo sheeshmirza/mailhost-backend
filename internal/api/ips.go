@@ -55,7 +55,7 @@ FROM dedicated_ips
 WHERE account_id = $1 AND created_at < $2
 ORDER BY created_at DESC LIMIT $3`, acct, before, limit)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to query dedicated ips")
+		s.internal(w, err)
 		return
 	}
 	defer rows.Close()

@@ -13,7 +13,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/time/rate"
 
@@ -208,17 +210,28 @@ func (w *Worker) consumeBroker(ctx context.Context, queueName string, jobs chan<
 			if !ok {
 				return
 			}
+			delivUUID, parseErr := uuid.Parse(djob.Msg.DeliveryID)
+			if parseErr != nil {
+				w.log.Warn("dropping malformed delivery job from broker: invalid uuid", "delivery_id", djob.Msg.DeliveryID, "err", parseErr)
+				_ = djob.Ack()
+				continue
+			}
 			var attempts int
 			err := w.db.QueryRow(ctx, `
 UPDATE deliveries SET status = 'sending', attempts = attempts + 1, locked_until = now() + interval '15 minutes', updated_at = now()
 WHERE id = $1 AND status IN ('queued', 'deferred')
-RETURNING attempts`, djob.Msg.DeliveryID).Scan(&attempts)
+RETURNING attempts`, delivUUID).Scan(&attempts)
 			if err != nil {
 				if errors.Is(err, pgx.ErrNoRows) {
 					_ = djob.Ack()
 				} else {
 					w.log.Error("failed to lock delivery from broker", "delivery_id", djob.Msg.DeliveryID, "err", err)
-					_ = djob.Nack(true)
+					var pgErr *pgconn.PgError
+					if errors.As(err, &pgErr) && strings.HasPrefix(pgErr.Code, "22") {
+						_ = djob.Ack()
+					} else {
+						_ = djob.Nack(true)
+					}
 				}
 				continue
 			}

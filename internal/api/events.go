@@ -67,8 +67,7 @@ DO UPDATE SET traits = contacts.traits || EXCLUDED.traits, updated_at = now()
 RETURNING id`,
 		acct, email, dataJSON).Scan(&contactID)
 	if err != nil {
-		s.log.Error("ensure contact for event failed", "account_id", acct, "email", email, "event_name", name, "err", err)
-		writeError(w, http.StatusInternalServerError, "failed to prepare event contact")
+		s.internal(w, err)
 		return
 	}
 
@@ -81,8 +80,7 @@ VALUES ($1, $2, $3, $4)
 RETURNING id, created_at`,
 		acct, name, email, dataJSON).Scan(&eventID, &createdAt)
 	if err != nil {
-		s.log.Error("record custom event failed", "err", err)
-		writeError(w, http.StatusInternalServerError, "failed to record event")
+		s.internal(w, err)
 		return
 	}
 
@@ -113,8 +111,7 @@ WHERE account_id = $1 AND created_at < $2
 ORDER BY created_at DESC LIMIT $3`,
 		acct, before, limit)
 	if err != nil {
-		s.log.Error("list events failed", "err", err)
-		writeError(w, http.StatusInternalServerError, "failed to list events")
+		s.internal(w, err)
 		return
 	}
 	defer rows.Close()
@@ -126,7 +123,7 @@ ORDER BY created_at DESC LIMIT $3`,
 		var dataBytes []byte
 		var createdAt time.Time
 		if err := rows.Scan(&id, &name, &email, &dataBytes, &createdAt); err != nil {
-			writeError(w, http.StatusInternalServerError, "scan failed")
+			s.internal(w, err)
 			return
 		}
 		var payload map[string]any
@@ -175,7 +172,7 @@ WHERE id = $1 AND account_id = $2`,
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "query failed")
+		s.internal(w, err)
 		return
 	}
 

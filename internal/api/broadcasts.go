@@ -93,7 +93,7 @@ func (s *Server) createBroadcast(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.ValidateFromAddress(r.Context(), accountID(r), from); err != nil {
-		writeFromError(w, err)
+		s.writeFromError(w, err)
 		return
 	}
 	if strings.TrimSpace(req.Subject) == "" || len(req.Subject) > 998 || strings.ContainsAny(req.Subject, "\r\n") {
@@ -176,8 +176,7 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'draft', $12, now())
 RETURNING id, created_at, updated_at`,
 		acct, segID, audID, topID, name, from, req.Subject, replyTo, req.PreviewText, req.HTML, req.Text, scheduledAt).
 		Scan(&id, &createdAt, &updatedAt); err != nil {
-		s.log.Error("create broadcast failed", "err", err)
-		writeError(w, http.StatusInternalServerError, "failed to create broadcast")
+		s.internal(w, err)
 		return
 	}
 
@@ -217,8 +216,7 @@ WHERE account_id = $1 AND created_at < $2
 ORDER BY created_at DESC LIMIT $3`,
 		acct, before, limit)
 	if err != nil {
-		s.log.Error("list broadcasts failed", "err", err)
-		writeError(w, http.StatusInternalServerError, "failed to list broadcasts")
+		s.internal(w, err)
 		return
 	}
 	defer rows.Close()
@@ -235,7 +233,7 @@ ORDER BY created_at DESC LIMIT $3`,
 
 		if err := rows.Scan(&id, &segID, &audID, &topID, &name, &from, &subject, &replyTo, &preview, &status,
 			&schedAt, &sentAt, &rcptCount, &sentCount, &createdAt, &updatedAt); err != nil {
-			writeError(w, http.StatusInternalServerError, "scan failed")
+			s.internal(w, err)
 			return
 		}
 
@@ -309,7 +307,7 @@ WHERE id = $1 AND account_id = $2`,
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "query failed")
+		s.internal(w, err)
 		return
 	}
 
@@ -372,7 +370,7 @@ func (s *Server) updateBroadcast(w http.ResponseWriter, r *http.Request) {
 	if req.From != "" {
 		from := strings.TrimSpace(req.From)
 		if err := s.ValidateFromAddress(r.Context(), acct, from); err != nil {
-			writeFromError(w, err)
+			s.writeFromError(w, err)
 			return
 		}
 	}
@@ -402,7 +400,7 @@ SET name = COALESCE(NULLIF($3, ''), name),
 WHERE id = $1 AND account_id = $2 AND status = 'draft'`,
 		id, acct, req.Name, req.From, req.Subject, replyTo, req.PreviewText, req.HTML, req.Text)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "update failed")
+		s.internal(w, err)
 		return
 	}
 	if tag.RowsAffected() == 0 {
@@ -434,7 +432,7 @@ func (s *Server) deleteBroadcast(w http.ResponseWriter, r *http.Request) {
 		`DELETE FROM broadcasts WHERE id = $1 AND account_id = $2`,
 		id, acct)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "delete failed")
+		s.internal(w, err)
 		return
 	}
 	if tag.RowsAffected() == 0 {
@@ -478,7 +476,7 @@ RETURNING id, name, created_at`,
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "duplicate failed")
+		s.internal(w, err)
 		return
 	}
 

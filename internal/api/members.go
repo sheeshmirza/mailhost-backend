@@ -33,7 +33,7 @@ FROM organization_members
 WHERE account_id = $1 AND created_at < $2
 ORDER BY created_at DESC LIMIT $3`, acct, before, limit)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to query members")
+		s.internal(w, err)
 		return
 	}
 	defer rows.Close()
@@ -97,7 +97,7 @@ ON CONFLICT (account_id, email) DO UPDATE SET role = $4, user_id = COALESCE($2, 
 RETURNING id, user_id, created_at, updated_at`,
 		acct, matchedUserID, email, role).Scan(&id, &returnedUserID, &createdAt, &updatedAt)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to add member")
+		s.internal(w, err)
 		return
 	}
 

@@ -133,8 +133,7 @@ RETURNING id, created_at, updated_at`,
 		acct, targetURL, req.Events, status, storedSecret).
 		Scan(&id, &createdAt, &updatedAt)
 	if err != nil {
-		s.log.Error("create webhook failed", "err", err)
-		writeError(w, http.StatusInternalServerError, "failed to create webhook")
+		s.internal(w, err)
 		return
 	}
 
@@ -164,8 +163,7 @@ WHERE account_id = $1 AND created_at < $2
 ORDER BY created_at DESC LIMIT $3`,
 		acct, before, limit)
 	if err != nil {
-		s.log.Error("list webhooks failed", "err", err)
-		writeError(w, http.StatusInternalServerError, "failed to list webhooks")
+		s.internal(w, err)
 		return
 	}
 	defer rows.Close()
@@ -178,7 +176,7 @@ ORDER BY created_at DESC LIMIT $3`,
 		var createdAt, updatedAt time.Time
 
 		if err := rows.Scan(&id, &targetURL, &events, &status, &createdAt, &updatedAt); err != nil {
-			writeError(w, http.StatusInternalServerError, "scan failed")
+			s.internal(w, err)
 			return
 		}
 
@@ -226,7 +224,7 @@ WHERE id = $1 AND account_id = $2`,
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "query failed")
+		s.internal(w, err)
 		return
 	}
 
@@ -287,7 +285,7 @@ SET url = COALESCE(NULLIF($3, ''), url),
 WHERE id = $1 AND account_id = $2`,
 		id, acct, targetURL, req.Events, status)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "update failed")
+		s.internal(w, err)
 		return
 	}
 	if tag.RowsAffected() == 0 {
@@ -319,7 +317,7 @@ func (s *Server) deleteWebhook(w http.ResponseWriter, r *http.Request) {
 		`DELETE FROM webhooks WHERE id = $1 AND account_id = $2`,
 		id, acct)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "delete failed")
+		s.internal(w, err)
 		return
 	}
 	if tag.RowsAffected() == 0 {
@@ -496,13 +494,13 @@ func (s *Server) testWebhook(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "webhook not found")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "database error")
+		s.internal(w, err)
 		return
 	}
 
 	secret, _, err := s.openSigningSecret(secretText)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to decode signing secret")
+		s.internal(w, err)
 		return
 	}
 
@@ -577,7 +575,7 @@ WHERE webhook_id = $1 AND created_at < $2
 ORDER BY created_at DESC
 LIMIT $3`, id, before, limit)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "query failed")
+		s.internal(w, err)
 		return
 	}
 	defer rows.Close()
@@ -590,7 +588,7 @@ LIMIT $3`, id, before, limit)
 		var lastError *string
 		var createdAt, updatedAt time.Time
 		if err := rows.Scan(&did, &eventType, &status, &attempts, &lastError, &createdAt, &updatedAt); err != nil {
-			writeError(w, http.StatusInternalServerError, "scan failed")
+			s.internal(w, err)
 			return
 		}
 		data = append(data, map[string]any{
@@ -639,7 +637,7 @@ FROM webhooks w
 WHERE d.id = $1 AND d.webhook_id = $2 AND w.id = d.webhook_id AND w.account_id = $3`,
 		dID, wID, acct)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "retry failed")
+		s.internal(w, err)
 		return
 	}
 	if tag.RowsAffected() == 0 {
