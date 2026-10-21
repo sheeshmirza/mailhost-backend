@@ -684,7 +684,7 @@ func (s *Server) previewTemplate(w http.ResponseWriter, r *http.Request) {
 	var name, subject, htmlContent, textContent string
 	var publishedHTML, publishedText, publishedSubject *string
 	err = s.rdb.QueryRow(r.Context(), `
-SELECT name, subject, html_content, text_content, published_html, published_text, published_subject
+SELECT name, subject, html, text, published_html, published_text, published_subject
 FROM templates WHERE id = $1 AND account_id = $2`, id, acct).Scan(&name, &subject, &htmlContent, &textContent, &publishedHTML, &publishedText, &publishedSubject)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -748,7 +748,7 @@ func (s *Server) testSendTemplate(w http.ResponseWriter, r *http.Request) {
 	var name, subject, htmlContent, textContent string
 	var publishedHTML, publishedText, publishedSubject *string
 	err = s.rdb.QueryRow(r.Context(), `
-SELECT name, subject, html_content, text_content, published_html, published_text, published_subject
+SELECT name, subject, html, text, published_html, published_text, published_subject
 FROM templates WHERE id = $1 AND account_id = $2`, id, acct).Scan(&name, &subject, &htmlContent, &textContent, &publishedHTML, &publishedText, &publishedSubject)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

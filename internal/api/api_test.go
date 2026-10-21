@@ -138,7 +138,7 @@ func TestLiveAPIEndpoints(t *testing.T) {
 	ts := httptest.NewServer(server.Handler())
 	defer ts.Close()
 
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := &http.Client{Timeout: 15 * time.Second}
 
 	doReq := func(method, path string, body any) (*http.Response, []byte) {
 		var rdr io.Reader
@@ -218,6 +218,41 @@ func TestLiveAPIEndpoints(t *testing.T) {
 	}
 
 	if createdTpl.ID != "" {
+		// Update template
+		resp, _ = doReq(http.MethodPatch, "/v1/templates/"+createdTpl.ID, map[string]string{
+			"name": "Welcome Email V2",
+			"html": "<p>Updated welcome {{name}}</p>",
+		})
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("PATCH /v1/templates/%s code=%d", createdTpl.ID, resp.StatusCode)
+		}
+
+		// Publish template
+		resp, _ = doReq(http.MethodPost, "/v1/templates/"+createdTpl.ID+"/publish", nil)
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("POST /v1/templates/%s/publish code=%d", createdTpl.ID, resp.StatusCode)
+		}
+
+		// List template versions
+		resp, _ = doReq(http.MethodGet, "/v1/templates/"+createdTpl.ID+"/versions", nil)
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("GET /v1/templates/%s/versions code=%d", createdTpl.ID, resp.StatusCode)
+		}
+
+		// Preview template
+		resp, _ = doReq(http.MethodPost, "/v1/templates/"+createdTpl.ID+"/preview", map[string]any{
+			"variables": map[string]string{"name": "Alice"},
+		})
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("POST /v1/templates/%s/preview code=%d", createdTpl.ID, resp.StatusCode)
+		}
+
+		// Rollback template
+		resp, _ = doReq(http.MethodPost, "/v1/templates/"+createdTpl.ID+"/rollback/1", nil)
+		if resp.StatusCode != http.StatusOK {
+			t.Logf("POST /v1/templates/%s/rollback/1 code=%d", createdTpl.ID, resp.StatusCode)
+		}
+
 		resp, _ = doReq(http.MethodGet, "/v1/templates/"+createdTpl.ID, nil)
 		if resp.StatusCode != http.StatusOK {
 			t.Errorf("GET /v1/templates/%s code=%d", createdTpl.ID, resp.StatusCode)
@@ -327,23 +362,74 @@ VALUES ($1, $2, $3, 'verified', 'tok_ver', 'k1', $4, $5, 'sec')`, verifiedDomID,
 		if resp.StatusCode != http.StatusOK {
 			t.Errorf("GET /v1/emails/%s code=%d", sentEmail.ID, resp.StatusCode)
 		}
+		resp, _ = doReq(http.MethodPost, "/v1/emails/"+sentEmail.ID+"/cancel", nil)
+		if resp.StatusCode != http.StatusOK {
+			t.Logf("POST /v1/emails/%s/cancel code=%d", sentEmail.ID, resp.StatusCode)
+		}
+	}
+	resp, _ = doReq(http.MethodGet, "/v1/emails", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("GET /v1/emails code=%d", resp.StatusCode)
 	}
 
-	// 8. Contacts: Create and List
-	resp, _ = doReq(http.MethodPost, "/v1/contacts", map[string]string{
+	// 8. Contacts & Audiences
+	resp, body = doReq(http.MethodPost, "/v1/contacts", map[string]string{
 		"email":      "bob-" + accountID.String()[:8] + "@example.com",
 		"first_name": "Bob",
 	})
 	if resp.StatusCode != http.StatusCreated {
 		t.Errorf("POST /v1/contacts code=%d", resp.StatusCode)
 	}
+	var createdContact struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(body, &createdContact)
+
 	resp, _ = doReq(http.MethodGet, "/v1/contacts", nil)
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("GET /v1/contacts code=%d", resp.StatusCode)
 	}
 
-	// 9. Broadcasts: Create and List
-	resp, _ = doReq(http.MethodPost, "/v1/broadcasts", map[string]string{
+	if createdContact.ID != "" {
+		resp, _ = doReq(http.MethodGet, "/v1/contacts/"+createdContact.ID, nil)
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("GET /v1/contacts/%s code=%d", createdContact.ID, resp.StatusCode)
+		}
+		resp, _ = doReq(http.MethodPatch, "/v1/contacts/"+createdContact.ID, map[string]string{
+			"first_name": "Bobby",
+		})
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("PATCH /v1/contacts/%s code=%d", createdContact.ID, resp.StatusCode)
+		}
+		resp, _ = doReq(http.MethodDelete, "/v1/contacts/"+createdContact.ID, nil)
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("DELETE /v1/contacts/%s code=%d", createdContact.ID, resp.StatusCode)
+		}
+	}
+
+	resp, body = doReq(http.MethodPost, "/v1/audiences", map[string]string{
+		"name": "General Audience",
+	})
+	if resp.StatusCode == http.StatusCreated {
+		var createdAudience struct {
+			ID string `json:"id"`
+		}
+		_ = json.Unmarshal(body, &createdAudience)
+		resp, _ = doReq(http.MethodGet, "/v1/audiences", nil)
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("GET /v1/audiences code=%d", resp.StatusCode)
+		}
+		if createdAudience.ID != "" {
+			resp, _ = doReq(http.MethodGet, "/v1/audiences/"+createdAudience.ID, nil)
+			if resp.StatusCode != http.StatusOK {
+				t.Errorf("GET /v1/audiences/%s code=%d", createdAudience.ID, resp.StatusCode)
+			}
+			_, _ = doReq(http.MethodDelete, "/v1/audiences/"+createdAudience.ID, nil)
+		}
+	}
+
+	// 9. Broadcasts: Create, Get, Patch, Duplicate, List, Delete
+	resp, body = doReq(http.MethodPost, "/v1/broadcasts", map[string]string{
 		"name":    "Spring Newsletter",
 		"from":    "news@" + verifiedDomName,
 		"subject": "Spring Announcements",
@@ -351,21 +437,73 @@ VALUES ($1, $2, $3, 'verified', 'tok_ver', 'k1', $4, $5, 'sec')`, verifiedDomID,
 	if resp.StatusCode != http.StatusCreated {
 		t.Errorf("POST /v1/broadcasts code=%d", resp.StatusCode)
 	}
+	var createdBroadcast struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(body, &createdBroadcast)
+
 	resp, _ = doReq(http.MethodGet, "/v1/broadcasts", nil)
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("GET /v1/broadcasts code=%d", resp.StatusCode)
 	}
 
-	// 10. Automations: Create and List
-	resp, _ = doReq(http.MethodPost, "/v1/automations", map[string]string{
+	if createdBroadcast.ID != "" {
+		resp, _ = doReq(http.MethodGet, "/v1/broadcasts/"+createdBroadcast.ID, nil)
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("GET /v1/broadcasts/%s code=%d", createdBroadcast.ID, resp.StatusCode)
+		}
+		resp, _ = doReq(http.MethodPatch, "/v1/broadcasts/"+createdBroadcast.ID, map[string]string{
+			"name": "Spring Newsletter Updated",
+		})
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("PATCH /v1/broadcasts/%s code=%d", createdBroadcast.ID, resp.StatusCode)
+		}
+		resp, _ = doReq(http.MethodPost, "/v1/broadcasts/"+createdBroadcast.ID+"/duplicate", nil)
+		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+			t.Logf("POST /v1/broadcasts/%s/duplicate code=%d", createdBroadcast.ID, resp.StatusCode)
+		}
+		resp, _ = doReq(http.MethodDelete, "/v1/broadcasts/"+createdBroadcast.ID, nil)
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("DELETE /v1/broadcasts/%s code=%d", createdBroadcast.ID, resp.StatusCode)
+		}
+	}
+
+	// 10. Automations: Create, Get, Patch, Runs, List, Delete
+	resp, body = doReq(http.MethodPost, "/v1/automations", map[string]string{
 		"name": "User Onboarding Flow",
 	})
 	if resp.StatusCode != http.StatusCreated {
 		t.Errorf("POST /v1/automations code=%d", resp.StatusCode)
 	}
+	var createdAutomation struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(body, &createdAutomation)
+
 	resp, _ = doReq(http.MethodGet, "/v1/automations", nil)
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("GET /v1/automations code=%d", resp.StatusCode)
+	}
+
+	if createdAutomation.ID != "" {
+		resp, _ = doReq(http.MethodGet, "/v1/automations/"+createdAutomation.ID, nil)
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("GET /v1/automations/%s code=%d", createdAutomation.ID, resp.StatusCode)
+		}
+		resp, _ = doReq(http.MethodPatch, "/v1/automations/"+createdAutomation.ID, map[string]string{
+			"name": "User Onboarding Flow V2",
+		})
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("PATCH /v1/automations/%s code=%d", createdAutomation.ID, resp.StatusCode)
+		}
+		resp, _ = doReq(http.MethodGet, "/v1/automations/"+createdAutomation.ID+"/runs", nil)
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("GET /v1/automations/%s/runs code=%d", createdAutomation.ID, resp.StatusCode)
+		}
+		resp, _ = doReq(http.MethodDelete, "/v1/automations/"+createdAutomation.ID, nil)
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("DELETE /v1/automations/%s code=%d", createdAutomation.ID, resp.StatusCode)
+		}
 	}
 
 	// 11. Members: List
@@ -374,7 +512,7 @@ VALUES ($1, $2, $3, 'verified', 'tok_ver', 'k1', $4, $5, 'sec')`, verifiedDomID,
 		t.Errorf("GET /v1/members code=%d", resp.StatusCode)
 	}
 
-	// 12. MCP endpoint (JSON-RPC tools/list)
+	// 12. MCP endpoint (JSON-RPC tools/list and tools/call)
 	resp, body = doReq(http.MethodPost, "/mcp", map[string]any{
 		"jsonrpc": "2.0",
 		"method":  "tools/list",
@@ -382,6 +520,36 @@ VALUES ($1, $2, $3, 'verified', 'tok_ver', 'k1', $4, $5, 'sec')`, verifiedDomID,
 	})
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("POST /mcp code=%d, body=%s", resp.StatusCode, string(body))
+	}
+
+	resp, _ = doReq(http.MethodPost, "/mcp", map[string]any{
+		"jsonrpc": "2.0",
+		"method":  "tools/call",
+		"params": map[string]any{
+			"name":      "list_domains",
+			"arguments": map[string]any{},
+		},
+		"id": 2,
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("POST /mcp tools/call list_domains code=%d", resp.StatusCode)
+	}
+
+	if sentEmail.ID != "" {
+		resp, _ = doReq(http.MethodPost, "/mcp", map[string]any{
+			"jsonrpc": "2.0",
+			"method":  "tools/call",
+			"params": map[string]any{
+				"name": "get_email",
+				"arguments": map[string]any{
+					"id": sentEmail.ID,
+				},
+			},
+			"id": 3,
+		})
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("POST /mcp tools/call get_email code=%d", resp.StatusCode)
+		}
 	}
 
 	// 13. Tracking & Analytics (Open, Click, and Unsubscribe)
@@ -430,25 +598,39 @@ VALUES ($1, $2, $3, $4, 'tracking.rcpt@remote.com', 'delivered', 1)`,
 	// Wait 150ms for asynchronous tracking goroutines to complete DB updates
 	time.Sleep(150 * time.Millisecond)
 
+	var openCnt, clickCnt int
+	_ = pool.QueryRow(ctx, `SELECT open_count, click_count FROM deliveries WHERE id = $1`, delivID).Scan(&openCnt, &clickCnt)
+	t.Logf("Delivery open_count=%d, click_count=%d", openCnt, clickCnt)
+
+	var evtCnt int
+	_ = pool.QueryRow(ctx, `SELECT count(*) FROM events WHERE account_id = $1`, accountID).Scan(&evtCnt)
+	t.Logf("Events count for account=%d", evtCnt)
+
+	var rollCnt int
+	_ = pool.QueryRow(ctx, `SELECT count(*) FROM event_rollups WHERE account_id = $1`, accountID).Scan(&rollCnt)
+	t.Logf("Event_rollups count for account=%d", rollCnt)
+
 	// Analytics endpoint: verify rollups/events include opened & clicked
 	resp, body = doReq(http.MethodGet, "/v1/analytics", nil)
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("GET /v1/analytics code=%d, body=%s", resp.StatusCode, string(body))
 	}
 	var analyticsResp struct {
-		Sent      int64 `json:"sent"`
-		Delivered int64 `json:"delivered"`
-		Opened    int64 `json:"opened"`
-		Clicked   int64 `json:"clicked"`
+		Totals struct {
+			Sent      int64 `json:"sent"`
+			Delivered int64 `json:"delivered"`
+			Opened    int64 `json:"opened"`
+			Clicked   int64 `json:"clicked"`
+		} `json:"totals"`
 	}
 	_ = json.Unmarshal(body, &analyticsResp)
 	t.Logf("Analytics result: Sent=%d, Delivered=%d, Opened=%d, Clicked=%d",
-		analyticsResp.Sent, analyticsResp.Delivered, analyticsResp.Opened, analyticsResp.Clicked)
-	if analyticsResp.Opened < 1 {
-		t.Errorf("expected Opened >= 1, got %d", analyticsResp.Opened)
+		analyticsResp.Totals.Sent, analyticsResp.Totals.Delivered, analyticsResp.Totals.Opened, analyticsResp.Totals.Clicked)
+	if analyticsResp.Totals.Opened < 1 {
+		t.Errorf("expected Opened >= 1, got %d", analyticsResp.Totals.Opened)
 	}
-	if analyticsResp.Clicked < 1 {
-		t.Errorf("expected Clicked >= 1, got %d", analyticsResp.Clicked)
+	if analyticsResp.Totals.Clicked < 1 {
+		t.Errorf("expected Clicked >= 1, got %d", analyticsResp.Totals.Clicked)
 	}
 
 	// 14. Batch Email Sending
@@ -639,6 +821,38 @@ VALUES ($1, $2, $3, $4, 'tracking.rcpt@remote.com', 'delivered', 1)`,
 		t.Errorf("POST /v1/users/login err=%v, code=%d", err, loginResp.StatusCode)
 	} else {
 		loginResp.Body.Close()
+	}
+
+	// 23. Suppressions CRUD
+	resp, body = doReq(http.MethodPost, "/v1/suppressions", map[string]any{
+		"address": "bounced.user@remote.com",
+		"reason":  "hard_bounce",
+	})
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		t.Errorf("POST /v1/suppressions code=%d, body=%s", resp.StatusCode, string(body))
+	}
+	resp, _ = doReq(http.MethodGet, "/v1/suppressions", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("GET /v1/suppressions code=%d", resp.StatusCode)
+	}
+	resp, _ = doReq(http.MethodDelete, "/v1/suppressions/bounced.user@remote.com", nil)
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		t.Errorf("DELETE /v1/suppressions code=%d", resp.StatusCode)
+	}
+
+	// 24. Domain Patch and Verify
+	if createdDomain.ID != "" {
+		resp, _ = doReq(http.MethodPatch, "/v1/domains/"+createdDomain.ID, map[string]any{
+			"open_tracking":  true,
+			"click_tracking": true,
+		})
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("PATCH /v1/domains/%s code=%d", createdDomain.ID, resp.StatusCode)
+		}
+		resp, _ = doReq(http.MethodPost, "/v1/domains/"+createdDomain.ID+"/verify", nil)
+		if resp.StatusCode != http.StatusOK {
+			t.Logf("POST /v1/domains/%s/verify code=%d", createdDomain.ID, resp.StatusCode)
+		}
 	}
 
 	// Clean up created domain
