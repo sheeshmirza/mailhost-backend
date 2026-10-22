@@ -128,3 +128,4 @@ func TestSemanticSearchEndpoints(t *testing.T) {
 		}
 	})
 }
+

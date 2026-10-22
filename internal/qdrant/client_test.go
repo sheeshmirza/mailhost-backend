@@ -237,3 +237,4 @@ func TestClient_ValidationErrors(t *testing.T) {
 		t.Fatalf("expected error on invalid scheme")
 	}
 }
+
