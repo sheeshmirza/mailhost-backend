@@ -857,6 +857,39 @@ VALUES ($1, $2, $3, $4, 'tracking.rcpt@remote.com', 'delivered', 1)`,
 		}
 	}
 
+	// 25. Semantic Search Endpoints (Emails & Templates)
+	resp, body = doReq(http.MethodPost, "/v1/emails/semantic-search", map[string]any{
+		"query": "invoice confirmation",
+		"limit": 10,
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("POST /v1/emails/semantic-search code=%d, body=%s", resp.StatusCode, string(body))
+	}
+
+	resp, body = doReq(http.MethodPost, "/v1/templates/semantic-search", map[string]any{
+		"query": "welcome",
+		"limit": 10,
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("POST /v1/templates/semantic-search code=%d, body=%s", resp.StatusCode, string(body))
+	}
+
+	// 26. Semantic Search MCP Tools
+	resp, body = doReq(http.MethodPost, "/mcp", map[string]any{
+		"jsonrpc": "2.0",
+		"id":      101,
+		"method":  "tools/call",
+		"params": map[string]any{
+			"name": "semantic_search_emails",
+			"arguments": map[string]any{
+				"query": "invoice",
+			},
+		},
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("MCP tools/call semantic_search_emails code=%d, body=%s", resp.StatusCode, string(body))
+	}
+
 	// Clean up created domain
 	if createdDomain.ID != "" {
 		_, _ = doReq(http.MethodDelete, "/v1/domains/"+createdDomain.ID, nil)
