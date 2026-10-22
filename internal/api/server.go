@@ -186,6 +186,7 @@ func (s *Server) Handler() http.Handler {
 		"POST /v1/emails/batch":              s.sendBatch,
 		"POST /v1/emails/bulk":               s.sendBulk,
 		"POST /v1/emails/semantic-search":    s.semanticSearchEmails,
+		"POST /v1/emails/search/semantic":    s.semanticSearchEmails,
 		"GET /v1/emails":                     s.listEmails,
 		"GET /v1/emails/{id}":                s.getEmail,
 		"POST /v1/emails/{id}/cancel":        s.cancelEmail,
@@ -253,6 +254,7 @@ func (s *Server) Handler() http.Handler {
 		// Templates
 		"POST /v1/templates":                         s.createTemplate,
 		"POST /v1/templates/semantic-search":        s.semanticSearchTemplates,
+		"POST /v1/templates/search/semantic":        s.semanticSearchTemplates,
 		"GET /v1/templates":                          s.listTemplates,
 		"GET /v1/templates/{id}":                     s.getTemplate,
 		"PATCH /v1/templates/{id}":                   s.updateTemplate,

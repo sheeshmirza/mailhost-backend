@@ -127,5 +127,29 @@ func TestSemanticSearchEndpoints(t *testing.T) {
 			t.Fatalf("unexpected data: %+v", parsed.Data)
 		}
 	})
+
+	// Test 5: Route Alias for emails
+	t.Run("RouteAliasEmails", func(t *testing.T) {
+		body := bytes.NewReader([]byte(`{"query": "invoice payment receipt", "limit": 5}`))
+		req := httptest.NewRequest(http.MethodPost, "/v1/emails/search/semantic", body)
+		req = req.WithContext(context.WithValue(req.Context(), ctxKey{}, "test-acct"))
+		w := httptest.NewRecorder()
+		s.semanticSearchEmails(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200 OK, got %d: %s", w.Code, w.Body.String())
+		}
+	})
+
+	// Test 6: Route Alias for templates
+	t.Run("RouteAliasTemplates", func(t *testing.T) {
+		body := bytes.NewReader([]byte(`{"query": "billing invoice", "limit": 10}`))
+		req := httptest.NewRequest(http.MethodPost, "/v1/templates/search/semantic", body)
+		req = req.WithContext(context.WithValue(req.Context(), ctxKey{}, "test-acct"))
+		w := httptest.NewRecorder()
+		s.semanticSearchTemplates(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200 OK, got %d: %s", w.Code, w.Body.String())
+		}
+	})
 }
 
