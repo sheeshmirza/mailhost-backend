@@ -29,6 +29,7 @@ import (
 	"mailhost/internal/config"
 	"mailhost/internal/docstore"
 	"mailhost/internal/metrics"
+	"mailhost/internal/qdrant"
 	"mailhost/internal/rediscache"
 	"mailhost/internal/secretbox"
 	"mailhost/internal/webhook"
@@ -48,6 +49,7 @@ type Server struct {
 	domains       *cache.Cache[*signingKey]   // account_id:domain_name -> verified signingKey
 	redis         *rediscache.Client
 	docstore      *docstore.Client
+	qdrant        *qdrant.Client
 	webhookClient *webhook.Client
 	authMu        sync.Mutex
 	authFailures  map[string]*authFailureRecord
@@ -100,6 +102,11 @@ func (s *Server) SetRedis(r *rediscache.Client) {
 // SetDocstore configures the optional document store used for large payloads.
 func (s *Server) SetDocstore(d *docstore.Client) {
 	s.docstore = d
+}
+
+// SetQdrant configures the optional Qdrant vector database used for semantic search.
+func (s *Server) SetQdrant(q *qdrant.Client) {
+	s.qdrant = q
 }
 
 // Handler returns the complete HTTP handler, including authentication,
@@ -175,14 +182,15 @@ func (s *Server) Handler() http.Handler {
 		"DELETE /v1/aliases/{id}": s.deleteAlias,
 
 		// Emails
-		"POST /v1/emails":             s.sendEmail,
-		"POST /v1/emails/batch":       s.sendBatch,
-		"POST /v1/emails/bulk":        s.sendBulk,
-		"GET /v1/emails":              s.listEmails,
-		"GET /v1/emails/{id}":         s.getEmail,
-		"POST /v1/emails/{id}/cancel": s.cancelEmail,
-		"PATCH /v1/emails/{id}":       s.cancelEmail,
-		"GET /v1/batches/{id}":        s.getBatch,
+		"POST /v1/emails":                    s.sendEmail,
+		"POST /v1/emails/batch":              s.sendBatch,
+		"POST /v1/emails/bulk":               s.sendBulk,
+		"POST /v1/emails/semantic-search":    s.semanticSearchEmails,
+		"GET /v1/emails":                     s.listEmails,
+		"GET /v1/emails/{id}":                s.getEmail,
+		"POST /v1/emails/{id}/cancel":        s.cancelEmail,
+		"PATCH /v1/emails/{id}":              s.cancelEmail,
+		"GET /v1/batches/{id}":               s.getBatch,
 
 		// Inbound & Receiving
 		"GET /v1/inbound":                           s.listInbound,
@@ -244,6 +252,7 @@ func (s *Server) Handler() http.Handler {
 
 		// Templates
 		"POST /v1/templates":                         s.createTemplate,
+		"POST /v1/templates/semantic-search":        s.semanticSearchTemplates,
 		"GET /v1/templates":                          s.listTemplates,
 		"GET /v1/templates/{id}":                     s.getTemplate,
 		"PATCH /v1/templates/{id}":                   s.updateTemplate,
@@ -472,6 +481,15 @@ func (s *Server) readiness(w http.ResponseWriter, r *http.Request) {
 			checks["mongodb"] = "unavailable"
 		} else {
 			checks["mongodb"] = "ok"
+		}
+	}
+
+	if s.qdrant != nil {
+		if err := s.qdrant.Ping(ctx); err != nil {
+			s.log.Error("readiness check failed for qdrant", "error", err)
+			checks["qdrant"] = "unavailable"
+		} else {
+			checks["qdrant"] = "ok"
 		}
 	}
 

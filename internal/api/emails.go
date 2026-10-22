@@ -23,6 +23,7 @@ import (
 
 	"mailhost/internal/docstore"
 	"mailhost/internal/mailer"
+	"mailhost/internal/qdrant"
 	"mailhost/internal/queue"
 	"mailhost/internal/validator"
 )

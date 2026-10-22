@@ -48,6 +48,9 @@ type Config struct {
 	RedisURL              string       // optional redis:// connection string for distributed caching & rate limiting
 	MongoDBURI            string       // optional mongodb:// connection string for document store & payload offload
 	MongoDBDatabase       string       // optional database name (defaults to "mailhost")
+	QdrantURL             string       // optional http:// connection string for Qdrant vector database
+	QdrantAPIKey          string       // optional api key for Qdrant
+	QdrantCollectionPrefix string      // optional prefix for vector collections (defaults to "mailhost")
 	AllowPrivateDelivery  bool         // optional flag to allow outbound delivery to private IP networks (for local/dev testing)
 	SkipDNSVerification   bool         // dev only: mark domain DNS records verified without lookups
 	DNSServer             string       // optional custom DNS resolver host:port (e.g. "127.0.0.1:1053" or "dns:53")
@@ -176,6 +179,9 @@ func Load() (*Config, error) {
 		RedisURL:              os.Getenv("REDIS_URL"),
 		MongoDBURI:            os.Getenv("MONGODB_URI"),
 		MongoDBDatabase:       env("MONGODB_DATABASE", "mailhost"),
+		QdrantURL:             os.Getenv("QDRANT_URL"),
+		QdrantAPIKey:          os.Getenv("QDRANT_API_KEY"),
+		QdrantCollectionPrefix: env("QDRANT_COLLECTION_PREFIX", "mailhost"),
 		AllowPrivateDelivery:  envBool("ALLOW_PRIVATE_DELIVERY", false),
 		SkipDNSVerification:   envBool("SKIP_DNS_VERIFICATION", false),
 		DNSServer:             os.Getenv("DNS_SERVER"),
