@@ -329,3 +329,4 @@ Run the complete Go test suite with the Go race detector enabled across all 19 p
 go test -race -count=1 ./internal/...
 ```
 All packages run cleanly with zero failures and zero race conditions.
+
