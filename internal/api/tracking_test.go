@@ -78,12 +78,21 @@ func TestInjectTracking(t *testing.T) {
 }
 
 func TestRecordTrackingEvent(t *testing.T) {
-	ctx := context.Background()
-	db, err := pgxpool.New(ctx, "postgres://mailhost:mailhost_secret@localhost:5433/mailhost?sslmode=disable")
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	connURL := "postgres://mailhost:mailhost_secret@localhost:5433/mailhost?sslmode=disable"
+	db, err := pgxpool.New(ctx, connURL)
 	if err != nil {
 		t.Skip("Postgres not available:", err)
+		return
 	}
 	defer db.Close()
+
+	if err := db.Ping(ctx); err != nil {
+		t.Skip("Postgres not available:", err)
+		return
+	}
 
 	token := uuid.MustParse("e8a168ed-35b4-4cce-a09b-bca7b2ed2fd2")
 	eventType := "opened"
