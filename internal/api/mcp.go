@@ -172,6 +172,28 @@ var mailhostMCPTools = []mcpTool{
 			Properties: map[string]schemaProp{},
 		},
 	},
+	{
+		Name:        "semantic_search_emails",
+		Description: "Perform vector similarity search across emails by natural language query.",
+		InputSchema: inputSchema{
+			Type: "object",
+			Properties: map[string]schemaProp{
+				"query": {Type: "string", Description: "Natural language search query or description."},
+			},
+			Required: []string{"query"},
+		},
+	},
+	{
+		Name:        "semantic_search_templates",
+		Description: "Perform vector similarity search across email templates by natural language query.",
+		InputSchema: inputSchema{
+			Type: "object",
+			Properties: map[string]schemaProp{
+				"query": {Type: "string", Description: "Natural language search query or topic description."},
+			},
+			Required: []string{"query"},
+		},
+	},
 }
 
 // handleMCP processes JSON-RPC 2.0 requests conforming to the Model Context Protocol (MCP).
@@ -585,6 +607,70 @@ SELECT type, sum(count)::bigint FROM combined GROUP BY type`, acct)
 		}
 		b, _ := json.Marshal(counters)
 		return string(b), nil
+
+	case "semantic_search_emails":
+		query, _ := args["query"].(string)
+		if strings.TrimSpace(query) == "" {
+			return "", fmt.Errorf("query is required")
+		}
+		if s.qdrant != nil {
+			hits, err := s.qdrant.SearchEmails(ctx, acct, query, 10)
+			if err == nil {
+				return mcpJSON(hits)
+			}
+		}
+		rows, err := s.rdb.Query(ctx, `
+SELECT id, subject, coalesce(body_preview, ''), sender, status, created_at
+FROM emails
+WHERE account_id = $1 AND (subject ILIKE '%' || $2 || '%' OR body_preview ILIKE '%' || $2 || '%')
+ORDER BY created_at DESC LIMIT 10`, acct, query)
+		if err != nil {
+			return "", err
+		}
+		defer rows.Close()
+		var list []map[string]any
+		for rows.Next() {
+			var id uuid.UUID
+			var subject, snippet, from, status string
+			var createdAt time.Time
+			_ = rows.Scan(&id, &subject, &snippet, &from, &status, &createdAt)
+			list = append(list, map[string]any{
+				"id": id.String(), "subject": subject, "snippet": snippet, "from": from, "status": status, "created_at": createdAt.Format(time.RFC3339),
+			})
+		}
+		return mcpJSON(list)
+
+	case "semantic_search_templates":
+		query, _ := args["query"].(string)
+		if strings.TrimSpace(query) == "" {
+			return "", fmt.Errorf("query is required")
+		}
+		if s.qdrant != nil {
+			hits, err := s.qdrant.SearchTemplates(ctx, acct, query, 10)
+			if err == nil {
+				return mcpJSON(hits)
+			}
+		}
+		rows, err := s.rdb.Query(ctx, `
+SELECT id, name, subject, coalesce(text_content, ''), created_at
+FROM templates
+WHERE account_id = $1 AND (name ILIKE '%' || $2 || '%' OR subject ILIKE '%' || $2 || '%')
+ORDER BY created_at DESC LIMIT 10`, acct, query)
+		if err != nil {
+			return "", err
+		}
+		defer rows.Close()
+		var list []map[string]any
+		for rows.Next() {
+			var id uuid.UUID
+			var name, subject, snippet string
+			var createdAt time.Time
+			_ = rows.Scan(&id, &name, &subject, &snippet, &createdAt)
+			list = append(list, map[string]any{
+				"id": id.String(), "name": name, "subject": subject, "snippet": snippet, "created_at": createdAt.Format(time.RFC3339),
+			})
+		}
+		return mcpJSON(list)
 
 	default:
 		return "", fmt.Errorf("unsupported tool: %s", toolName)

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"mailhost/internal/qdrant"
 	"mailhost/internal/queue"
 	"mailhost/internal/validator"
 )
@@ -114,6 +116,7 @@ RETURNING id, created_at, updated_at`,
 	}
 
 	s.audit(r.Context(), acct, "create", "template", id.String(), r)
+	s.indexTemplateVector(id.String(), acct, name, req.Subject, req.Text)
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"id":         id.String(),
 		"object":     "template",
@@ -322,6 +325,7 @@ RETURNING id, name, alias, subject, html, text, variables, status, created_at, u
 	_ = json.Unmarshal(varsBytes, &vars)
 
 	s.audit(r.Context(), acct, "update", "template", id.String(), r)
+	s.indexTemplateVector(id.String(), acct, name, subject, textStr)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"id":         id.String(),
 		"object":     "template",
@@ -551,6 +555,7 @@ func (s *Server) deleteTemplate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.audit(r.Context(), acct, "delete", "template", id.String(), r)
+	s.deleteTemplateVector(id.String())
 	writeJSON(w, http.StatusOK, map[string]any{
 		"id":      id.String(),
 		"object":  "template",
@@ -796,5 +801,109 @@ FROM templates WHERE id = $1 AND account_id = $2`, id, acct).Scan(&name, &subjec
 
 	s.audit(r.Context(), acct, "test_send", "template", id.String(), r)
 	writeJSONBytes(w, http.StatusOK, body)
+}
+
+func (s *Server) indexTemplateVector(templateID, acctID, name, subject, snippet string) {
+	if s.qdrant == nil {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = s.qdrant.UpsertTemplate(ctx, qdrant.TemplatePoint{
+			ID:        templateID,
+			AccountID: acctID,
+			Name:      name,
+			Subject:   subject,
+			Snippet:   snippet,
+		})
+	}()
+}
+
+func (s *Server) deleteTemplateVector(templateID string) {
+	if s.qdrant == nil {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = s.qdrant.DeletePoint(ctx, s.qdrant.TemplatesCollection(), templateID)
+	}()
+}
+
+type semanticSearchTemplateReq struct {
+	Query string `json:"query"`
+	Limit int    `json:"limit"`
+}
+
+func (s *Server) semanticSearchTemplates(w http.ResponseWriter, r *http.Request) {
+	var req semanticSearchTemplateReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
+	req.Query = strings.TrimSpace(req.Query)
+	if req.Query == "" {
+		writeError(w, http.StatusBadRequest, "query parameter is required")
+		return
+	}
+	if req.Limit <= 0 || req.Limit > 100 {
+		req.Limit = 20
+	}
+	acct := accountID(r)
+
+	// If Qdrant is available, perform vector similarity search
+	if s.qdrant != nil {
+		results, err := s.qdrant.SearchTemplates(r.Context(), acct, req.Query, req.Limit)
+		if err == nil {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"data":   results,
+				"source": "qdrant",
+			})
+			return
+		}
+		s.log.Warn("qdrant template search failed, falling back to database", "error", err)
+	}
+
+	// Resilient fallback: SQL-based search over name, subject, and text_content
+	rows, err := s.rdb.Query(r.Context(), `
+SELECT id, name, subject, coalesce(text_content, ''), created_at
+FROM templates
+WHERE account_id = $1 AND (name ILIKE '%' || $2 || '%' OR subject ILIKE '%' || $2 || '%' OR text_content ILIKE '%' || $2 || '%')
+ORDER BY created_at DESC
+LIMIT $3`, acct, req.Query, req.Limit)
+	if err != nil {
+		s.internal(w, err)
+		return
+	}
+	defer rows.Close()
+
+	list := make([]map[string]any, 0)
+	for rows.Next() {
+		var id uuid.UUID
+		var name, subject, snippet string
+		var createdAt time.Time
+		if err := rows.Scan(&id, &name, &subject, &snippet, &createdAt); err != nil {
+			s.internal(w, err)
+			return
+		}
+		list = append(list, map[string]any{
+			"id":         id.String(),
+			"account_id": acct,
+			"name":       name,
+			"subject":    subject,
+			"snippet":    snippet,
+			"score":      1.0,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		s.internal(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"data":   list,
+		"source": "database",
+	})
 }
 

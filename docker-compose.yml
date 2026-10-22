@@ -50,6 +50,19 @@ services:
     restart: unless-stopped
     volumes:
       - testVol:/data/db
+  my-qdrant:
+    image: qdrant/qdrant:latest
+    container_name: my-qdrant
+    hostname: qdrant-server
+    networks:
+      - testNet
+      - mailhost-net
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    restart: unless-stopped
+    volumes:
+      - testVol:/qdrant/storage
   mailhost:
     build:
       context: .

@@ -23,6 +23,7 @@ import (
 	"mailhost/internal/imap"
 	"mailhost/internal/inbound"
 	"mailhost/internal/pop3"
+	"mailhost/internal/qdrant"
 	"mailhost/internal/queue"
 	"mailhost/internal/rediscache"
 	"mailhost/internal/secretbox"
@@ -120,6 +121,25 @@ func run(log *slog.Logger) error {
 		}
 	}
 
+	var qdrantClient *qdrant.Client
+	if cfg.QdrantURL != "" {
+		qc, err := qdrant.New(cfg.QdrantURL, cfg.QdrantAPIKey, cfg.QdrantCollectionPrefix, log)
+		if err != nil {
+			log.Warn("qdrant client initialization failed", "err", err)
+		} else {
+			qdrantClient = qc
+			go func() {
+				cctx, ccancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer ccancel()
+				if err := qdrantClient.EnsureCollections(cctx); err != nil {
+					log.Warn("qdrant collections setup warning (will retry on demand)", "err", err)
+				} else {
+					log.Info("qdrant vector database connected", "collections_prefix", cfg.QdrantCollectionPrefix)
+				}
+			}()
+		}
+	}
+
 	errc := make(chan error, 8)
 	var wg sync.WaitGroup
 
@@ -130,6 +150,9 @@ func run(log *slog.Logger) error {
 		}
 		if docClient != nil {
 			apiServer.SetDocstore(docClient)
+		}
+		if qdrantClient != nil {
+			apiServer.SetQdrant(qdrantClient)
 		}
 		apiServer.StartBackgroundSchedulers(ctx)
 		srv := &http.Server{
