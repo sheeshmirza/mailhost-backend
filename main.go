@@ -57,12 +57,9 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	defer pool.Close()
-	if err := db.Migrate(ctx, pool); err != nil {
-		return err
-	}
+
 	// Create the current and upcoming event partitions before the API can accept
-	// sends. This keeps events out of the default partition and allows later
-	// monthly partitions to be attached without a data migration.
+	// sends. This keeps events out of the default partition.
 	if err := db.MaintainPartitions(ctx, pool, cfg.RetentionMonths); err != nil {
 		return err
 	}

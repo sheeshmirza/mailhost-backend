@@ -106,11 +106,6 @@ func TestMailboxLiveLifecycle(t *testing.T) {
 	}
 	defer pool.Close()
 
-	// Ensure database schema is migrated
-	if err := db.Migrate(ctx, pool); err != nil {
-		t.Fatalf("Migrate failed: %v", err)
-	}
-
 	accountID := uuid.New().String()
 	_, err = pool.Exec(ctx, `INSERT INTO accounts (id, name) VALUES ($1, 'Test Account')`, accountID)
 	if err != nil {

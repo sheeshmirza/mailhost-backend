@@ -2,34 +2,9 @@ package db
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 )
-
-func TestEmbeddedSchema(t *testing.T) {
-	if len(schema) == 0 {
-		t.Fatal("expected embedded schema to be non-empty")
-	}
-
-	requiredTables := []string{
-		"CREATE TABLE IF NOT EXISTS accounts",
-		"CREATE TABLE IF NOT EXISTS domains",
-		"CREATE TABLE IF NOT EXISTS emails",
-		"CREATE TABLE IF NOT EXISTS deliveries",
-		"CREATE TABLE IF NOT EXISTS events",
-		"CREATE TABLE IF NOT EXISTS event_rollups",
-		"CREATE TABLE IF NOT EXISTS suppressions",
-		"CREATE TABLE IF NOT EXISTS api_keys",
-		"CREATE TABLE IF NOT EXISTS webhooks",
-	}
-
-	for _, tbl := range requiredTables {
-		if !strings.Contains(schema, tbl) {
-			t.Errorf("schema missing expected table definition: %q", tbl)
-		}
-	}
-}
 
 func TestExpireIdempotencyKeysValidation(t *testing.T) {
 	ctx := context.Background()
@@ -67,11 +42,6 @@ func TestLivePostgresConnectAndPing(t *testing.T) {
 
 	if err := pool.Ping(ctx); err != nil {
 		t.Fatalf("Ping failed: %v", err)
-	}
-
-	// Test Migrate
-	if err := Migrate(ctx, pool); err != nil {
-		t.Fatalf("Migrate failed: %v", err)
 	}
 
 	// Test MaintainPartitions with retention

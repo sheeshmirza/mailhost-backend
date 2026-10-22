@@ -1,9 +1,8 @@
-// Package db manages PostgreSQL connections, schema migrations, and event partitions.
+// Package db manages PostgreSQL connections, event partitions, and idempotency cleanup.
 package db
 
 import (
 	"context"
-	_ "embed"
 	"fmt"
 	"time"
 
@@ -11,12 +10,8 @@ import (
 )
 
 const (
-	migrationLockID = 727274
 	partitionLockID = 727275
 )
-
-//go:embed schema.sql
-var schema string
 
 // Connect creates and health-checks a PostgreSQL connection pool.
 func Connect(ctx context.Context, url string, maxConns int32) (*pgxpool.Pool, error) {
@@ -42,21 +37,6 @@ func Connect(ctx context.Context, url string, maxConns int32) (*pgxpool.Pool, er
 		return nil, err
 	}
 	return pool, nil
-}
-
-// Migrate applies the idempotent schema; an advisory lock serialises concurrent instances.
-func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
-	conn, err := pool.Acquire(ctx)
-	if err != nil {
-		return err
-	}
-	defer conn.Release()
-	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", migrationLockID); err != nil {
-		return err
-	}
-	defer conn.Exec(context.Background(), "SELECT pg_advisory_unlock($1)", migrationLockID)
-	_, err = conn.Exec(ctx, schema)
-	return err
 }
 
 // MaintainPartitions pre-creates upcoming monthly event partitions and drops expired ones.

@@ -221,8 +221,8 @@ If you use Nginx instead, keep `proxy_set_header X-Forwarded-For $proxy_add_x_fo
    CREATE DATABASE mailhost OWNER mailhost_user;
    GRANT ALL PRIVILEGES ON DATABASE mailhost TO mailhost_user;
    ```
-2. **Schema Migrations**:
-   Mailhost automatically applies schema migrations (`schema.sql`) and maintains monthly event partitions on startup via PostgreSQL advisory locks. No manual SQL script application is required.
+2. **Database Schema & Maintenance**:
+   Database schemas are provisioned out-of-band via standard database administration tools. Mailhost maintains monthly event partitions automatically on startup.
 
 3. **Event Partition Retention**:
    The `RETENTION_MONTHS` setting (default: 12) automatically detaches and drops older monthly event tables during daily maintenance runs, keeping database disk usage bounded and predictable.
@@ -248,7 +248,6 @@ docker compose -f docker-compose.prod.yml --env-file .env.production logs -f mai
 ```
 
 Upgrades: `git pull && docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build mailhost`
-(schema migrations run automatically under an advisory lock).
 
 Backups: schedule `docker compose -f docker-compose.prod.yml --env-file .env.production exec -T postgres pg_dump -U mailhost -Fc mailhost > mailhost-$(date +%F).dump`
 and copy the dumps plus `.env.production` off-host.

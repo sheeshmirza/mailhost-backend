@@ -108,10 +108,6 @@ func TestLiveAPIEndpoints(t *testing.T) {
 	}
 	defer pool.Close()
 
-	if err := db.Migrate(ctx, pool); err != nil {
-		t.Fatalf("Migrate failed: %v", err)
-	}
-
 	accountID := uuid.New()
 	_, err = pool.Exec(ctx, `INSERT INTO accounts (id, name) VALUES ($1, 'API Test Account')`, accountID)
 	if err != nil {
