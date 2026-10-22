@@ -530,6 +530,7 @@ func (s *Server) sendEmail(w http.ResponseWriter, r *http.Request) {
 		s.enqueueError(w, err)
 		return
 	}
+	s.indexEmailVector(e.ID.String(), accountID(r), req.Subject, req.Text, req.From, req.To)
 	writeJSONBytes(w, http.StatusAccepted, body)
 }
 
@@ -971,4 +972,101 @@ UPDATE emails e SET status = 'cancelled'
 WHERE e.id = $1 AND e.account_id = $2
   AND NOT EXISTS (SELECT 1 FROM deliveries d WHERE d.email_id = e.id AND d.status <> 'cancelled')`, id, acct)
 	return err
+}
+
+func (s *Server) indexEmailVector(emailID, acctID, subject, snippet, from string, to []string) {
+	if s.qdrant == nil {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = s.qdrant.UpsertEmail(ctx, qdrant.EmailPoint{
+			ID:        emailID,
+			AccountID: acctID,
+			Subject:   subject,
+			Snippet:   snippet,
+			From:      from,
+			To:        to,
+			CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		})
+	}()
+}
+
+type semanticSearchEmailReq struct {
+	Query string `json:"query"`
+	Limit int    `json:"limit"`
+}
+
+func (s *Server) semanticSearchEmails(w http.ResponseWriter, r *http.Request) {
+	var req semanticSearchEmailReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
+	req.Query = strings.TrimSpace(req.Query)
+	if req.Query == "" {
+		writeError(w, http.StatusBadRequest, "query parameter is required")
+		return
+	}
+	if req.Limit <= 0 || req.Limit > 100 {
+		req.Limit = 20
+	}
+	acct := accountID(r)
+
+	// If Qdrant is available, perform vector similarity search
+	if s.qdrant != nil {
+		results, err := s.qdrant.SearchEmails(r.Context(), acct, req.Query, req.Limit)
+		if err == nil {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"data":   results,
+				"source": "qdrant",
+			})
+			return
+		}
+		s.log.Warn("qdrant search failed, falling back to database", "error", err)
+	}
+
+	// Resilient fallback: SQL-based search over subject and snippet
+	rows, err := s.rdb.Query(r.Context(), `
+SELECT id, subject, coalesce(body_preview, ''), sender, status, created_at
+FROM emails
+WHERE account_id = $1 AND (subject ILIKE '%' || $2 || '%' OR body_preview ILIKE '%' || $2 || '%')
+ORDER BY created_at DESC
+LIMIT $3`, acct, req.Query, req.Limit)
+	if err != nil {
+		s.internal(w, err)
+		return
+	}
+	defer rows.Close()
+
+	list := make([]map[string]any, 0)
+	for rows.Next() {
+		var id uuid.UUID
+		var subject, snippet, from, status string
+		var createdAt time.Time
+		if err := rows.Scan(&id, &subject, &snippet, &from, &status, &createdAt); err != nil {
+			s.internal(w, err)
+			return
+		}
+		list = append(list, map[string]any{
+			"id":         id.String(),
+			"account_id": acct,
+			"subject":    subject,
+			"snippet":    snippet,
+			"from":       from,
+			"status":     status,
+			"created_at": createdAt.Format(time.RFC3339),
+			"score":      1.0,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		s.internal(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"data":   list,
+		"source": "database",
+	})
 }
