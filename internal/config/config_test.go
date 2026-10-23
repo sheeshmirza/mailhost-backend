@@ -368,4 +368,27 @@ INVALID_LINE_NO_EQUALS
 	os.Unsetenv("EMPTY_LINE")
 }
 
+func TestEnvExampleFile(t *testing.T) {
+	envExamplePath := "../../.env.example"
+	if _, err := os.Stat(envExamplePath); err != nil {
+		t.Fatalf(".env.example missing at %s: %v", envExamplePath, err)
+	}
+	loadEnvFile(envExamplePath)
+	if os.Getenv("DATABASE_URL") == "" {
+		t.Error("expected DATABASE_URL from .env.example to be non-empty")
+	}
+	if os.Getenv("REDIS_URL") == "" {
+		t.Error("expected REDIS_URL from .env.example to be non-empty")
+	}
+	if os.Getenv("RABBITMQ_URL") == "" {
+		t.Error("expected RABBITMQ_URL from .env.example to be non-empty")
+	}
+	if os.Getenv("MONGODB_URI") == "" {
+		t.Error("expected MONGODB_URI from .env.example to be non-empty")
+	}
+	if os.Getenv("QDRANT_URL") == "" {
+		t.Error("expected QDRANT_URL from .env.example to be non-empty")
+	}
+}
+
 
