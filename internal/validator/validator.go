@@ -117,6 +117,9 @@ var rolePrefixes = map[string]bool{
 
 // IsRoleBasedEmail identifies team, department, or administrative aliases.
 func IsRoleBasedEmail(email string) bool {
+	if addr, err := mail.ParseAddress(email); err == nil {
+		email = addr.Address
+	}
 	clean := strings.ToLower(strings.TrimSpace(email))
 	parts := strings.Split(clean, "@")
 	if len(parts) != 2 {

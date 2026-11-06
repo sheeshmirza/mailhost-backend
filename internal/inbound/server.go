@@ -476,8 +476,8 @@ RETURNING id, created_at`,
 		},
 	}
 	url := *d.webhookURL
-	b.hookSem <- struct{}{}
 	go func() {
+		b.hookSem <- struct{}{}
 		defer func() { <-b.hookSem }()
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()

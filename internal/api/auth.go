@@ -1253,7 +1253,11 @@ func (s *Server) revokeUserSession(w http.ResponseWriter, r *http.Request) {
 
 	tag, err := s.db.Exec(r.Context(), `
 DELETE FROM user_sessions WHERE id = $1 AND user_id = $2`, id, uid)
-	if err != nil || tag.RowsAffected() == 0 {
+	if err != nil {
+		s.internal(w, err)
+		return
+	}
+	if tag.RowsAffected() == 0 {
 		writeError(w, http.StatusNotFound, "session not found")
 		return
 	}

@@ -227,6 +227,9 @@ func RenameMailbox(ctx context.Context, db *pgxpool.Pool, accountID, email, oldN
 	if strings.EqualFold(oldName, "INBOX") {
 		return errors.New("cannot rename INBOX")
 	}
+	if strings.EqualFold(newName, "INBOX") {
+		return errors.New("cannot rename mailbox to INBOX")
+	}
 	acctUUID, err := uuid.Parse(accountID)
 	if err != nil {
 		return err

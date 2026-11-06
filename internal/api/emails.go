@@ -1027,11 +1027,11 @@ func (s *Server) semanticSearchEmails(w http.ResponseWriter, r *http.Request) {
 		s.log.Warn("qdrant search failed, falling back to database", "error", err)
 	}
 
-	// Resilient fallback: SQL-based search over subject and snippet
+	// Resilient fallback: SQL-based search over subject
 	rows, err := s.rdb.Query(r.Context(), `
-SELECT id, subject, coalesce(body_preview, ''), sender, status, created_at
+SELECT id, subject, from_addr, status, created_at
 FROM emails
-WHERE account_id = $1 AND (subject ILIKE '%' || $2 || '%' OR body_preview ILIKE '%' || $2 || '%')
+WHERE account_id = $1 AND subject ILIKE '%' || $2 || '%'
 ORDER BY created_at DESC
 LIMIT $3`, acct, req.Query, req.Limit)
 	if err != nil {
@@ -1043,9 +1043,9 @@ LIMIT $3`, acct, req.Query, req.Limit)
 	list := make([]map[string]any, 0)
 	for rows.Next() {
 		var id uuid.UUID
-		var subject, snippet, from, status string
+		var subject, from, status string
 		var createdAt time.Time
-		if err := rows.Scan(&id, &subject, &snippet, &from, &status, &createdAt); err != nil {
+		if err := rows.Scan(&id, &subject, &from, &status, &createdAt); err != nil {
 			s.internal(w, err)
 			return
 		}
@@ -1053,7 +1053,7 @@ LIMIT $3`, acct, req.Query, req.Limit)
 			"id":         id.String(),
 			"account_id": acct,
 			"subject":    subject,
-			"snippet":    snippet,
+			"snippet":    "",
 			"from":       from,
 			"status":     status,
 			"created_at": createdAt.Format(time.RFC3339),

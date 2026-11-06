@@ -170,7 +170,13 @@ func (sess *session) Delete(name string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	return mailbox.DeleteMailbox(ctx, sess.db, sess.user.AccountID, sess.user.Email, name)
+	if err := mailbox.DeleteMailbox(ctx, sess.db, sess.user.AccountID, sess.user.Email, name); err != nil {
+		return err
+	}
+	if sess.selected != nil && strings.EqualFold(sess.selected.Name, name) {
+		sess.selected = nil
+	}
+	return nil
 }
 
 func (sess *session) Rename(oldName, newName string, options *imap.RenameOptions) error {
@@ -179,7 +185,13 @@ func (sess *session) Rename(oldName, newName string, options *imap.RenameOptions
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	return mailbox.RenameMailbox(ctx, sess.db, sess.user.AccountID, sess.user.Email, oldName, newName)
+	if err := mailbox.RenameMailbox(ctx, sess.db, sess.user.AccountID, sess.user.Email, oldName, newName); err != nil {
+		return err
+	}
+	if sess.selected != nil && strings.EqualFold(sess.selected.Name, oldName) {
+		sess.selected.Name = newName
+	}
+	return nil
 }
 
 func (sess *session) Subscribe(name string) error   { return sess.requireAuth() }

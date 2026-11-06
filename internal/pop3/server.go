@@ -332,8 +332,8 @@ func (sess *session) handleCommand(cmd string, args []string) (quit bool) {
 			return false
 		}
 		lines, err2 := strconv.Atoi(args[1])
-		if err2 != nil {
-			_ = sess.tp.PrintfLine("-ERR no such message")
+		if err2 != nil || lines < 0 {
+			_ = sess.tp.PrintfLine("-ERR invalid line count")
 			return false
 		}
 

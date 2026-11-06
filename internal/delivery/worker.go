@@ -183,7 +183,11 @@ func (w *Worker) Run(ctx context.Context) {
 				w.log.Error("claim deliveries", "err", err)
 			}
 			for _, j := range js {
-				jobs <- j
+				select {
+				case <-ctx.Done():
+					return
+				case jobs <- j:
+				}
 			}
 			claimed = len(js)
 		}

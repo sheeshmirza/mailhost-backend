@@ -154,7 +154,11 @@ WHERE account_id = $1 AND lower(role) IN ('administrator', 'owner', 'admin')`, a
 	tag, err := s.db.Exec(r.Context(), `
 DELETE FROM organization_members
 WHERE id = $1 AND account_id = $2`, id, acct)
-	if err != nil || tag.RowsAffected() == 0 {
+	if err != nil {
+		s.internal(w, err)
+		return
+	}
+	if tag.RowsAffected() == 0 {
 		writeError(w, http.StatusNotFound, "member not found")
 		return
 	}

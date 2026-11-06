@@ -620,9 +620,9 @@ SELECT type, sum(count)::bigint FROM combined GROUP BY type`, acct)
 			}
 		}
 		rows, err := s.rdb.Query(ctx, `
-SELECT id, subject, coalesce(body_preview, ''), sender, status, created_at
+SELECT id, subject, from_addr, status, created_at
 FROM emails
-WHERE account_id = $1 AND (subject ILIKE '%' || $2 || '%' OR body_preview ILIKE '%' || $2 || '%')
+WHERE account_id = $1 AND subject ILIKE '%' || $2 || '%'
 ORDER BY created_at DESC LIMIT 10`, acct, query)
 		if err != nil {
 			return "", err
@@ -631,11 +631,11 @@ ORDER BY created_at DESC LIMIT 10`, acct, query)
 		var list []map[string]any
 		for rows.Next() {
 			var id uuid.UUID
-			var subject, snippet, from, status string
+			var subject, from, status string
 			var createdAt time.Time
-			_ = rows.Scan(&id, &subject, &snippet, &from, &status, &createdAt)
+			_ = rows.Scan(&id, &subject, &from, &status, &createdAt)
 			list = append(list, map[string]any{
-				"id": id.String(), "subject": subject, "snippet": snippet, "from": from, "status": status, "created_at": createdAt.Format(time.RFC3339),
+				"id": id.String(), "subject": subject, "snippet": "", "from": from, "status": status, "created_at": createdAt.Format(time.RFC3339),
 			})
 		}
 		return mcpJSON(list)
@@ -652,9 +652,9 @@ ORDER BY created_at DESC LIMIT 10`, acct, query)
 			}
 		}
 		rows, err := s.rdb.Query(ctx, `
-SELECT id, name, subject, coalesce(text_content, ''), created_at
+SELECT id, name, subject, coalesce(text, ''), created_at
 FROM templates
-WHERE account_id = $1 AND (name ILIKE '%' || $2 || '%' OR subject ILIKE '%' || $2 || '%')
+WHERE account_id = $1 AND (name ILIKE '%' || $2 || '%' OR subject ILIKE '%' || $2 || '%' OR text ILIKE '%' || $2 || '%')
 ORDER BY created_at DESC LIMIT 10`, acct, query)
 		if err != nil {
 			return "", err

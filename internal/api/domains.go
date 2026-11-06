@@ -220,6 +220,7 @@ WHERE id = $1 AND account_id = $2 RETURNING `+domainCols,
 		s.internal(w, err)
 		return
 	}
+	s.domains.Delete(accountID(r) + ":" + d.Name)
 	writeJSON(w, http.StatusOK, d)
 }
 

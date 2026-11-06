@@ -865,11 +865,11 @@ func (s *Server) semanticSearchTemplates(w http.ResponseWriter, r *http.Request)
 		s.log.Warn("qdrant template search failed, falling back to database", "error", err)
 	}
 
-	// Resilient fallback: SQL-based search over name, subject, and text_content
+	// Resilient fallback: SQL-based search over name, subject, and text
 	rows, err := s.rdb.Query(r.Context(), `
-SELECT id, name, subject, coalesce(text_content, ''), created_at
+SELECT id, name, subject, coalesce(text, ''), created_at
 FROM templates
-WHERE account_id = $1 AND (name ILIKE '%' || $2 || '%' OR subject ILIKE '%' || $2 || '%' OR text_content ILIKE '%' || $2 || '%')
+WHERE account_id = $1 AND (name ILIKE '%' || $2 || '%' OR subject ILIKE '%' || $2 || '%' OR text ILIKE '%' || $2 || '%')
 ORDER BY created_at DESC
 LIMIT $3`, acct, req.Query, req.Limit)
 	if err != nil {

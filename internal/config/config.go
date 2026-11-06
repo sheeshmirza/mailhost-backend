@@ -266,7 +266,7 @@ func Load() (*Config, error) {
 }
 
 func validateNumericEnv() error {
-	intKeys := []string{"DB_MAX_CONNS", "WORKERS", "MAX_ATTEMPTS", "MAX_MESSAGE_BYTES", "RATE_LIMIT_BURST", "MAX_CONNS_PER_HOST", "DEST_RATE_LIMIT_BURST", "EVENT_RETENTION_MONTHS"}
+	intKeys := []string{"DB_MAX_CONNS", "WORKERS", "MAX_ATTEMPTS", "MAX_MESSAGE_BYTES", "RATE_LIMIT_BURST", "MAX_CONNS_PER_HOST", "DEST_RATE_LIMIT_BURST", "EVENT_RETENTION_MONTHS", "RETENTION_MONTHS"}
 	for _, key := range intKeys {
 		if value := os.Getenv(key); value != "" {
 			if _, err := strconv.Atoi(value); err != nil {

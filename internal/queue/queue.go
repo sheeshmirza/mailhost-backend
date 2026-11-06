@@ -463,6 +463,7 @@ func refreshEmailStatuses(ctx context.Context, tx pgx.Tx, emailIDs []string) err
 	_, err := tx.Exec(ctx, `
 UPDATE emails e
 SET status = CASE
+	WHEN EXISTS (SELECT 1 FROM deliveries d WHERE d.email_id = e.id AND d.status = 'scheduled') THEN 'scheduled'
 	WHEN EXISTS (SELECT 1 FROM deliveries d WHERE d.email_id = e.id AND d.status IN ('queued', 'deferred', 'sending')) THEN 'queued'
 	WHEN EXISTS (SELECT 1 FROM deliveries d WHERE d.email_id = e.id AND d.status = 'bounced') THEN 'bounced'
 	WHEN EXISTS (SELECT 1 FROM deliveries d WHERE d.email_id = e.id AND d.status = 'failed') THEN 'failed'

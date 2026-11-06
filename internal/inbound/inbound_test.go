@@ -94,7 +94,7 @@ func TestSASLLoginServer(t *testing.T) {
 	}
 
 	// Step 3: Send password, completes auth
-	chal, done, err = server.Next([]byte("valid_pass"))
+	_, done, err = server.Next([]byte("valid_pass"))
 	if err != nil || !done || !authenticated {
 		t.Fatalf("expected done=true and authenticated=true, got done=%v, auth=%v, err=%v", done, authenticated, err)
 	}
